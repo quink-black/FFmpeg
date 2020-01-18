@@ -101,6 +101,7 @@ typedef struct AudioFIRContext {
 } AudioFIRContext;
 
 void ff_afir_init(AudioFIRDSPContext *s);
+void ff_afir_init_aarch64(AudioFIRDSPContext *s);
 void ff_afir_init_x86(AudioFIRDSPContext *s);
 
 #endif /* AVFILTER_AFIR_H */

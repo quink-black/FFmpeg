@@ -829,6 +829,8 @@ void ff_afir_init(AudioFIRDSPContext *dsp)
 
     if (ARCH_X86)
         ff_afir_init_x86(dsp);
+    if (ARCH_AARCH64)
+        ff_afir_init_aarch64(dsp);
 }
 
 static av_cold int init(AVFilterContext *ctx)
