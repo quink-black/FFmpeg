@@ -145,6 +145,9 @@ void ff_anlmdn_init(AudioNLMDNDSPContext *dsp)
 
     if (ARCH_X86)
         ff_anlmdn_init_x86(dsp);
+    if (ARCH_AARCH64) {
+        ff_anlmdn_init_aarch64(dsp);
+    }
 }
 
 static int config_output(AVFilterLink *outlink)

@@ -1,6 +1,4 @@
 /*
- * Copyright (c) 2019 Paul B Mahol
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -18,24 +16,16 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVFILTER_ANLMDNDSP_H
-#define AVFILTER_ANLMDNDSP_H
+#include "libavutil/aarch64/cpu.h"
+#include "libavfilter/af_anlmdndsp.h"
 
-#include "libavutil/common.h"
+float ff_compute_distance_ssd_neon(const float *f1, const float *f2,
+                                   ptrdiff_t len);
 
-#include "audio.h"
-#include "avfilter.h"
-#include "formats.h"
-#include "internal.h"
+av_cold void ff_anlmdn_init_aarch64(AudioNLMDNDSPContext *s)
+{
+    int cpu_flags = av_get_cpu_flags();
 
-typedef struct AudioNLMDNDSPContext {
-    float (*compute_distance_ssd)(const float *f1, const float *f2, ptrdiff_t K);
-    void (*compute_cache)(float *cache, const float *f, ptrdiff_t S, ptrdiff_t K,
-                          ptrdiff_t i, ptrdiff_t jj);
-} AudioNLMDNDSPContext;
-
-void ff_anlmdn_init(AudioNLMDNDSPContext *s);
-void ff_anlmdn_init_aarch64(AudioNLMDNDSPContext *s);
-void ff_anlmdn_init_x86(AudioNLMDNDSPContext *s);
-
-#endif /* AVFILTER_ANLMDNDSP_H */
+    if (have_neon(cpu_flags))
+        s->compute_distance_ssd = ff_compute_distance_ssd_neon;
+}
