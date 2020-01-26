@@ -200,7 +200,7 @@ static inline void scale_samples_s16(uint8_t *dst, const uint8_t *src,
     int16_t *smp_dst       = (int16_t *)dst;
     const int16_t *smp_src = (const int16_t *)src;
     for (i = 0; i < nb_samples; i++)
-        smp_dst[i] = av_clip_int16(((int64_t)smp_src[i] * volume + 128) >> 8);
+        smp_dst[i] = (int16_t)av_clip64(((int64_t)smp_src[i] * volume + 128) >> 8, INT16_MIN, INT16_MAX);
 }
 
 static inline void scale_samples_s16_small(uint8_t *dst, const uint8_t *src,
