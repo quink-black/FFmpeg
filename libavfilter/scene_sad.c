@@ -61,6 +61,8 @@ ff_scene_sad_fn ff_scene_sad_get_fn(int depth)
     ff_scene_sad_fn sad = NULL;
     if (ARCH_X86)
         sad = ff_scene_sad_get_fn_x86(depth);
+    if (ARCH_AARCH64)
+        sad = ff_scene_sad_get_fn_aarch64(depth);
     if (!sad) {
         if (depth == 8)
             sad = ff_scene_sad_c;

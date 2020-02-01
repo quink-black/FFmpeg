@@ -16,31 +16,22 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/**
- * @file
- * Scene SAD functions
- */
+#include "libavutil/aarch64/cpu.h"
+#include "libavfilter/scene_sad.h"
 
-#ifndef AVFILTER_SCENE_SAD_H
-#define AVFILTER_SCENE_SAD_H
+void ff_scene_sad_neon(SCENE_SAD_PARAMS);
 
-#include "avfilter.h"
+void ff_scene_sad16_neon(SCENE_SAD_PARAMS);
 
-#define SCENE_SAD_PARAMS const uint8_t *src1, ptrdiff_t stride1, \
-                         const uint8_t *src2, ptrdiff_t stride2, \
-                         ptrdiff_t width, ptrdiff_t height, \
-                         uint64_t *sum
+ff_scene_sad_fn ff_scene_sad_get_fn_aarch64(int depth)
+{
+    int cpu_flags = av_get_cpu_flags();
+    if (have_neon(cpu_flags)) {
+        if (depth == 8)
+            return ff_scene_sad_neon;
+        if (depth == 16)
+            return ff_scene_sad16_neon;
+    }
 
-typedef void (*ff_scene_sad_fn)(SCENE_SAD_PARAMS);
-
-void ff_scene_sad_c(SCENE_SAD_PARAMS);
-
-void ff_scene_sad16_c(SCENE_SAD_PARAMS);
-
-ff_scene_sad_fn ff_scene_sad_get_fn_aarch64(int depth);
-
-ff_scene_sad_fn ff_scene_sad_get_fn_x86(int depth);
-
-ff_scene_sad_fn ff_scene_sad_get_fn(int depth);
-
-#endif /* AVFILTER_SCENE_SAD_H */
+    return NULL;
+}
