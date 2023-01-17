@@ -53,8 +53,10 @@
 # include "libavfilter/buffersrc.h"
 #endif
 
+#define GL_GLEXT_PROTOTYPES 1
 #include <SDL.h>
 #include <SDL_thread.h>
+#include <SDL_opengl.h>
 
 #include "cmdutils.h"
 
@@ -306,6 +308,39 @@ typedef struct VideoState {
     SDL_cond *continue_read_thread;
 } VideoState;
 
+typedef struct ShaderSource {
+    const char *vertex;
+    const char *frag;
+} ShaderSource;
+
+typedef struct GlContext {
+    SDL_GLContext ctx;
+
+    int window_width;
+    int window_height;
+
+    // vertex array object
+    GLuint vao;
+
+    // vertex buffer object
+    GLuint vbo;
+
+    ShaderSource shader_source;
+    GLuint vertex_shader;
+    GLuint frag_shader;
+    GLuint program;
+
+    int tex_count;
+    GLuint tex[3];
+    float tex_right;
+    int tex_width[3];
+    int tex_height[3];
+    int tex_format[3];
+    int tex_internal_format[3];
+} GlContext;
+
+static GlContext gl_context;
+
 /* options specified by the user */
 static AVInputFormat *file_iformat;
 static const char *input_filename;
@@ -392,6 +427,7 @@ static const struct TextureFormatEntry {
     { AV_PIX_FMT_YUV420P,        SDL_PIXELFORMAT_IYUV },
     { AV_PIX_FMT_YUYV422,        SDL_PIXELFORMAT_YUY2 },
     { AV_PIX_FMT_UYVY422,        SDL_PIXELFORMAT_UYVY },
+    { AV_PIX_FMT_NV12,           SDL_PIXELFORMAT_NV21 },
     { AV_PIX_FMT_NONE,           SDL_PIXELFORMAT_UNKNOWN },
 };
 
@@ -971,6 +1007,453 @@ static void set_sdl_yuv_conversion_mode(AVFrame *frame)
 #endif
 }
 
+// Shader sources
+#define VERTEX_SHADER                                   \
+    "attribute vec4 a_position;    \n"                  \
+    "attribute vec2 a_uv;          \n"                  \
+    "varying vec2 v_TexCoordinate; \n"                  \
+    "void main()                   \n"                  \
+    "{                             \n"                  \
+    "    v_TexCoordinate = a_uv;   \n"                  \
+    "    gl_Position = vec4(a_position.xyz, 1.0);  \n"  \
+    "}                             \n"                  \
+
+static ShaderSource rgb_shader = {
+        .vertex = VERTEX_SHADER,
+        .frag =
+        "uniform sampler2D tex0; \n"
+        "varying vec2 v_TexCoordinate; \n"
+        "void main()                   \n"
+        "{                             \n"
+        "    gl_FragColor = texture2D(tex0, v_TexCoordinate); \n"
+        "}                             \n",
+};
+
+static ShaderSource yuv_shader = {
+        .vertex = VERTEX_SHADER,
+        .frag =
+        "uniform sampler2D tex0; \n"
+        "uniform sampler2D tex1; \n"
+        "uniform sampler2D tex2; \n"
+        "varying vec2 v_TexCoordinate;   \n"
+        "const vec3 offset = vec3(-0.0627451017, -0.501960814, -0.501960814);\n"
+        "const vec3 Rcoeff = vec3(1.1644,  0.000,  1.7927); \n"
+        "const vec3 Gcoeff = vec3(1.1644, -0.2132, -0.5329);\n"
+        "const vec3 Bcoeff = vec3(1.1644,  2.1124,  0.000); \n"
+        "void main()                                        \n"
+        "{                                                  \n"
+        "    vec2 tcoord;                                   \n"
+        "    vec3 yuv, rgb;                                 \n"
+        "                                                   \n"
+        "    tcoord = v_TexCoordinate;                      \n"
+        "    yuv.x = texture2D(tex0, tcoord).r;             \n"
+        "    yuv.y = texture2D(tex1, tcoord).r;             \n"
+        "    yuv.z = texture2D(tex2, tcoord).r;             \n"
+        "    yuv += offset;                                 \n"
+        "    rgb.r = dot(yuv, Rcoeff);                      \n"
+        "    rgb.g = dot(yuv, Gcoeff);                      \n"
+        "    rgb.b = dot(yuv, Bcoeff);                      \n"
+        "                                                   \n"
+        "    gl_FragColor = vec4(rgb, 1.0);                 \n"
+        "}",
+};
+
+static ShaderSource nv12_shader = {
+        .vertex = VERTEX_SHADER,
+        .frag =
+        "uniform sampler2D tex0;  \n"
+        "uniform sampler2D tex1;  \n"
+        "varying vec2 v_TexCoordinate;    \n"
+        "const vec3 offset = vec3(-0.0627451017, -0.501960814, -0.501960814);\n"
+        "const vec3 Rcoeff = vec3(1.1644,  0.000,  1.7927); \n"
+        "const vec3 Gcoeff = vec3(1.1644, -0.2132, -0.5329);\n"
+        "const vec3 Bcoeff = vec3(1.1644,  2.1124,  0.000); \n"
+        "void main()                                        \n"
+        "{                                                  \n"
+        "    vec2 tcoord;                                   \n"
+        "    vec3 yuv, rgb;                                 \n"
+        "                                                   \n"
+        "    tcoord = v_TexCoordinate;                      \n"
+        "    yuv.x = texture2D(tex0, tcoord).r;             \n"
+        "    yuv.yz = texture2D(tex1, tcoord).rg;           \n"
+        "    yuv += offset;                                 \n"
+        "    rgb.r = dot(yuv, Rcoeff);                      \n"
+        "    rgb.g = dot(yuv, Gcoeff);                      \n"
+        "    rgb.b = dot(yuv, Bcoeff);                      \n"
+        "                                                   \n"
+        "    gl_FragColor = vec4(rgb, 1.0);                 \n"
+        "}",
+};
+
+static void gl_debug_cb(GLenum source, GLenum type, unsigned int id, GLenum severity,
+                        GLsizei length, const char *message, const void *userParam)
+{
+    const char *src = "";
+    const char *type_info = "";
+    int level;
+
+    if (id == 131169 || id == 131185 || id == 131218 || id == 131204)
+        return;
+
+    switch (source) {
+    case GL_DEBUG_SOURCE_API:
+        src = "API";
+        break;
+    case GL_DEBUG_SOURCE_WINDOW_SYSTEM:
+        src = "Window System";
+        break;
+    case GL_DEBUG_SOURCE_SHADER_COMPILER:
+        src = "Shader Compiler";
+        break;
+    case GL_DEBUG_SOURCE_THIRD_PARTY:
+        src = "Third Party";
+        break;
+    case GL_DEBUG_SOURCE_APPLICATION:
+        src = "Application";
+        break;
+    case GL_DEBUG_SOURCE_OTHER:
+        src = "Other";
+        break;
+    }
+
+    switch (type) {
+    case GL_DEBUG_TYPE_ERROR:
+        type_info = "Error";
+        break;
+    case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
+        type_info = "Deprecated Behaviour";
+        break;
+    case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
+        type_info = "Undefined Behaviour";
+        break;
+    case GL_DEBUG_TYPE_PORTABILITY:
+        type_info = "Portability";
+        break;
+    case GL_DEBUG_TYPE_PERFORMANCE:
+        type_info = "Performance";
+        break;
+    case GL_DEBUG_TYPE_MARKER:
+        type_info = "Marker";
+        break;
+    case GL_DEBUG_TYPE_PUSH_GROUP:
+        type_info = "Push Group";
+        break;
+    case GL_DEBUG_TYPE_POP_GROUP:
+        type_info = "Pop Group";
+        break;
+    case GL_DEBUG_TYPE_OTHER:
+        type_info = "Other";
+        break;
+    }
+
+    switch (severity) {
+    case GL_DEBUG_SEVERITY_HIGH:
+        level = AV_LOG_ERROR;
+        break;
+    case GL_DEBUG_SEVERITY_MEDIUM:
+        level = AV_LOG_WARNING;
+        break;
+    case GL_DEBUG_SEVERITY_LOW:
+        level = AV_LOG_INFO;
+        break;
+    case GL_DEBUG_SEVERITY_NOTIFICATION:
+        level = AV_LOG_DEBUG;
+        break;
+    }
+
+    av_log(NULL, level, "OpenGL debug message id %d, source %s, type %s: %s\n",
+           id, src, type_info, message);
+}
+
+static int video_gl_check_error(const char *func, int line)
+{
+    GLenum glError = glGetError();
+    switch (glError) {
+    case GL_NO_ERROR:
+        av_log(NULL, AV_LOG_INFO, "%s:%d, success\n", func, line);
+        return 0;
+    case GL_INVALID_ENUM:
+        av_log(NULL, AV_LOG_ERROR, "%s:%d, GL_INVALID_ENUM\n", func, line);
+        break;
+    case GL_INVALID_VALUE:
+        av_log(NULL, AV_LOG_ERROR, "%s:%d, GL_INVALID_VALUE\n", func, line);
+        break;
+    case GL_INVALID_OPERATION:
+        av_log(NULL, AV_LOG_ERROR, "%s:%d, GL_INVALID_OPERATION\n", func, line);
+        break;
+    case GL_INVALID_FRAMEBUFFER_OPERATION:
+        av_log(NULL, AV_LOG_ERROR, "%s:%d, GL_INVALID_FRAMEBUFFER_OPERATION\n", func, line);
+        break;
+    case GL_OUT_OF_MEMORY:
+        av_log(NULL, AV_LOG_ERROR, "%s:%d, GL_OUT_OF_MEMORY\n", func, line);
+        break;
+    default:
+        av_log(NULL, AV_LOG_ERROR, "%s:%d, GL_UNKNOWN_ERROR 0x%x\n", func, line, glError);
+        break;
+    }
+    return -1;
+}
+
+static int video_gl_setup_format(AVFrame *frame)
+{
+    if (frame->format == AV_PIX_FMT_YUV420P) {
+        gl_context.shader_source = yuv_shader;
+        gl_context.tex_count = 3;
+        gl_context.tex_right = (float)frame->width / frame->linesize[0];
+
+        for (int i = 0; i < 3; i++) {
+            gl_context.tex_format[i] = GL_RED;
+            gl_context.tex_internal_format[i] = GL_RED;
+            gl_context.tex_width[i] = frame->linesize[i];
+            gl_context.tex_height[i] = frame->height;
+            if (i > 0)
+                gl_context.tex_height[i] /= 2;
+        }
+    } else if (frame->format == AV_PIX_FMT_NV12) {
+        gl_context.shader_source = nv12_shader;
+        gl_context.tex_count = 2;
+        gl_context.tex_right = (float)frame->width / frame->linesize[0];
+        gl_context.tex_format[0] = GL_RED;
+        gl_context.tex_internal_format[0] = GL_RED;
+        gl_context.tex_format[1] = GL_RG;
+        gl_context.tex_internal_format[1] = GL_RG;
+        gl_context.tex_width[0] = frame->linesize[0];
+        gl_context.tex_width[1] = frame->linesize[1] / 2;
+        gl_context.tex_height[0] = frame->height;
+        gl_context.tex_height[1] = frame->height / 2;
+    } else if (frame->format == AV_PIX_FMT_RGBA) {
+        gl_context.shader_source = rgb_shader;
+        gl_context.tex_count = 1;
+        gl_context.tex_right = (float)(frame->width * 4) / frame->linesize[0];
+        gl_context.tex_format[0] = GL_RGBA;
+        gl_context.tex_internal_format[0] = GL_RGBA;
+        gl_context.tex_width[0] = frame->linesize[0] / 4;
+        gl_context.tex_height[0] = frame->height;
+    } else if (frame->format == AV_PIX_FMT_RGB24) {
+        gl_context.shader_source = rgb_shader;
+        gl_context.tex_count = 1;
+        gl_context.tex_right = (float)(frame->width * 3) / frame->linesize[0];
+        gl_context.tex_format[0] = GL_RGB;
+        gl_context.tex_internal_format[0] = GL_RGBA;
+        gl_context.tex_width[0] = frame->linesize[0] / 3;
+        gl_context.tex_height[0] = frame->height;
+    } else {
+        // TODO
+        av_log(NULL, AV_LOG_ERROR, "Unsupported pix fmt %s\n",
+               av_get_pix_fmt_name(frame->format));
+        return -1;
+    }
+
+    av_log(NULL, AV_LOG_INFO, "%s with %s success\n", __func__,
+           av_get_pix_fmt_name(frame->format));
+    return 0;
+}
+
+static int video_gl_build_shader(void)
+{
+    GLuint shader[2] = {};
+    const char *shader_name[] = {"vertex", "fragment"};
+    char msg[4096] = {};
+    GLint status = GL_TRUE;
+
+    // Create and compile the vertex shader
+    gl_context.vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(gl_context.vertex_shader, 1, &gl_context.shader_source.vertex, NULL);
+    glCompileShader(gl_context.vertex_shader);
+
+    // Create and compile the fragment shader
+    gl_context.frag_shader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(gl_context.frag_shader, 1, &gl_context.shader_source.frag, NULL);
+    glCompileShader(gl_context.frag_shader);
+
+    // Check status
+    shader[0] = gl_context.vertex_shader;
+    shader[1] = gl_context.frag_shader;
+
+    for (int i = 0; i < 2; i++) {
+        glGetShaderInfoLog(shader[i], sizeof(msg) - 1, NULL, msg);
+        if (msg[0])
+            av_log(NULL, AV_LOG_INFO, "%s shader info log: %s\n", shader_name[i], msg);
+        glGetShaderiv(shader[i], GL_COMPILE_STATUS, &status);
+        if (status == GL_FALSE) {
+            av_log(NULL, AV_LOG_ERROR, "compile %s shader failed\n", shader_name[i]);
+            return -1;
+        }
+    }
+
+    // Link the vertex and fragment shader into a shader program
+    gl_context.program = glCreateProgram();
+    glAttachShader(gl_context.program, gl_context.vertex_shader);
+    glAttachShader(gl_context.program, gl_context.frag_shader);
+    glLinkProgram(gl_context.program);
+
+    glGetProgramInfoLog(gl_context.program, sizeof(msg) - 1, NULL, msg);
+    if (msg[0])
+        av_log(NULL, AV_LOG_INFO, "shader program: %s\n", msg);
+    glGetProgramiv(gl_context.program, GL_LINK_STATUS, &status);
+    if (status == GL_FALSE) {
+        av_log(NULL, AV_LOG_ERROR, "link shader failed\n");
+        return -1;
+    }
+
+    glUseProgram(gl_context.program);
+    return video_gl_check_error(__func__, __LINE__);
+}
+
+static int video_gl_setup_vertex(AVFrame *frame)
+{
+    GLint pos_attrib = glGetAttribLocation(gl_context.program, "a_position");
+    GLint uv_attrib = glGetAttribLocation(gl_context.program, "a_uv");
+    // vertex X, vertex Y, UV X, UV Y
+    GLfloat vertices[] = {
+            -1.0f, 1.0f, 0.f, 0.f,
+            -1.0f, -1.0f, 0.f, 1.f,
+            1.0f, 1.0f, gl_context.tex_right, 0.f,
+            1.0f, -1.0f, gl_context.tex_right, 1.f};
+
+    // Create Vertex Array Object
+    glGenVertexArrays(1, &gl_context.vao);
+    glBindVertexArray(gl_context.vao);
+
+    // Create a Vertex Buffer Object and copy the vertex data to it
+    glGenBuffers(1, &gl_context.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, gl_context.vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(pos_attrib);
+    glVertexAttribPointer(pos_attrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+    glEnableVertexAttribArray(uv_attrib);
+    glVertexAttribPointer(uv_attrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (GLvoid *) (2 * sizeof(float)));
+    return video_gl_check_error(__func__, __LINE__);
+}
+
+static int video_gl_setup_texture(AVFrame *frame)
+{
+    const char *name[] = {
+            "tex0",
+            "tex1",
+            "tex2",
+    };
+
+    glGenTextures(gl_context.tex_count, gl_context.tex);
+    // Specify the texture of the video
+    for (int i = 0; i < gl_context.tex_count; i++) {
+        GLint tex_uniform = glGetUniformLocation(gl_context.program, name[i]);
+        glActiveTexture(GL_TEXTURE0 + i);
+        glUniform1i(tex_uniform, i);
+
+        glBindTexture(GL_TEXTURE_2D, gl_context.tex[i]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
+                     gl_context.tex_width[i],
+                     gl_context.tex_height[i],
+                     0,
+                     gl_context.tex_format[i],
+                     GL_UNSIGNED_BYTE,
+                     NULL);
+    }
+    return video_gl_check_error(__func__, __LINE__);
+}
+
+static void video_gl_dump_version(void)
+{
+    const char *vendor;
+    const char *renderer;
+    const char *version;
+    const char *shader_version;
+
+    vendor = glGetString(GL_VENDOR);
+    renderer = glGetString(GL_RENDERER);
+    version = glGetString(GL_VERSION);
+    shader_version = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    av_log(NULL, AV_LOG_INFO, "OpenGL vendor [%s], renderer [%s], version [%s], "
+                              "shader language version [%s]\n",
+           vendor, renderer, version, shader_version);
+    video_gl_check_error(__func__, __LINE__);
+}
+
+static int video_gl_init(VideoState *is)
+{
+    int ret;
+    Frame *vp;
+
+    vp = frame_queue_peek_last(&is->pictq);
+    // Must be called first, the following procedure depend on the format
+    ret = video_gl_setup_format(vp->frame);
+    if (ret)
+        return ret;
+
+    // Create OpenGL Context
+    gl_context.ctx = SDL_GL_CreateContext(window);
+    if (!gl_context.ctx) {
+        av_log(NULL, AV_LOG_ERROR, "SDL_GL_CreateContext failed\n");
+        return -1;
+    }
+    SDL_GL_MakeCurrent(window, gl_context.ctx);
+
+    video_gl_dump_version();
+
+    gl_context.window_width = is->width;
+    gl_context.window_height = is->height;
+    glViewport(0, 0, is->width, is->height);
+
+#if 1
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(gl_debug_cb, NULL);
+    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE);
+#endif
+
+    ret = video_gl_build_shader();
+    if (ret)
+        return ret;
+    ret = video_gl_setup_vertex(vp->frame);
+    if (ret)
+        return ret;
+    ret = video_gl_setup_texture(vp->frame);
+    return ret;
+}
+
+static void video_gl_destroy(void)
+{
+    if (!gl_context.ctx)
+        return;
+    SDL_GL_DeleteContext(gl_context.ctx);
+    gl_context.ctx = NULL;
+}
+
+static void video_gl_draw(Frame *vp)
+{
+    if (!gl_context.ctx) {
+        av_log(NULL, AV_LOG_ERROR, "%s, no OpenGL context\n", __func__);
+        return;
+    }
+    if (screen_width && screen_height &&
+        (screen_width != gl_context.window_width || screen_height != gl_context.window_height))
+        glViewport(0, 0, screen_width, screen_height);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    for (int i = 0; i < gl_context.tex_count; i++) {
+        glActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, gl_context.tex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
+                     gl_context.tex_width[i], gl_context.tex_height[i],
+                     0,
+                     gl_context.tex_format[i],
+                     GL_UNSIGNED_BYTE,
+                     vp->frame->data[i]);
+    }
+    // Draw the video rectangle
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    SDL_GL_SwapWindow(window);
+}
+
 static void video_image_display(VideoState *is)
 {
     Frame *vp;
@@ -1025,15 +1508,18 @@ static void video_image_display(VideoState *is)
 
     calculate_display_rect(&rect, is->xleft, is->ytop, is->width, is->height, vp->width, vp->height, vp->sar);
 
-    if (!vp->uploaded) {
-        if (upload_texture(&is->vid_texture, vp->frame, &is->img_convert_ctx) < 0)
-            return;
-        vp->uploaded = 1;
-        vp->flip_v = vp->frame->linesize[0] < 0;
+    if (!gl_context.ctx) {
+        if (!vp->uploaded) {
+            if (upload_texture(&is->vid_texture, vp->frame, &is->img_convert_ctx) < 0)
+                return;
+            vp->uploaded = 1;
+            vp->flip_v = vp->frame->linesize[0] < 0;
+        }
+
+        set_sdl_yuv_conversion_mode(vp->frame);
+        SDL_RenderCopyEx(renderer, is->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
     }
 
-    set_sdl_yuv_conversion_mode(vp->frame);
-    SDL_RenderCopyEx(renderer, is->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
     set_sdl_yuv_conversion_mode(NULL);
     if (sp) {
 #if USE_ONEPASS_SUBTITLE_RENDER
@@ -1052,6 +1538,8 @@ static void video_image_display(VideoState *is)
         }
 #endif
     }
+    if (gl_context.ctx)
+        video_gl_draw(vp);
 }
 
 static inline int compute_mod(int a, int b)
@@ -1336,6 +1824,7 @@ static void set_default_window_size(int width, int height, AVRational sar)
 static int video_open(VideoState *is)
 {
     int w,h;
+    int ret;
 
     w = screen_width ? screen_width : default_width;
     h = screen_height ? screen_height : default_height;
@@ -1353,6 +1842,14 @@ static int video_open(VideoState *is)
     is->width  = w;
     is->height = h;
 
+    ret = video_gl_init(is);
+    if (ret) {
+        av_log(NULL, AV_LOG_WARNING, "OpenGL init failed, use normal render\n");
+        video_gl_destroy();
+    } else {
+        av_log(NULL, AV_LOG_INFO, "OpenGL init success\n");
+    }
+
     return 0;
 }
 
@@ -1362,13 +1859,18 @@ static void video_display(VideoState *is)
     if (!is->width)
         video_open(is);
 
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    SDL_RenderClear(renderer);
+    if (!gl_context.ctx) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+    }
+
     if (is->audio_st && is->show_mode != SHOW_MODE_VIDEO)
         video_audio_display(is);
     else if (is->video_st)
         video_image_display(is);
-    SDL_RenderPresent(renderer);
+
+    if (!gl_context.ctx)
+        SDL_RenderPresent(renderer);
 }
 
 static double get_clock(Clock *c)
@@ -3734,8 +4236,13 @@ int main(int argc, char **argv)
             flags |= SDL_WINDOW_BORDERLESS;
         else
             flags |= SDL_WINDOW_RESIZABLE;
+        flags |= SDL_WINDOW_OPENGL;
         window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+        SDL_GL_SetSwapInterval(0);
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
         if (window) {
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (!renderer) {
