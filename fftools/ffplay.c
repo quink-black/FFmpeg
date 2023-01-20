@@ -1661,6 +1661,11 @@ static int video_create_hw_interop(AVCodecContext *ctx)
         return 0;
     }
 
+    if (hw_interop.egl_ctx == EGL_NO_CONTEXT) {
+        av_log(ctx, AV_LOG_ERROR, "No EGL context, skip vaapi\n");
+        return 0;
+    }
+
     ret = video_create_vaapi(ctx);
     if (ret)
         return ret;
