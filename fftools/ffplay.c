@@ -71,6 +71,9 @@
 
 #include <assert.h>
 
+// If SDL version >= 2.0.12, We can let SDL create the EGL context, otherwise create it by ourself
+#define CREATE_OUR_EGL_CONTEXT !SDL_VERSION_ATLEAST(2, 0, 12)
+
 const char program_name[] = "ffplay";
 const int program_birth_year = 2003;
 
@@ -1510,6 +1513,73 @@ static void vaapi_device_log_info(void *context, const char *message)
 
 static int video_egl_init(void)
 {
+#if CREATE_OUR_EGL_CONTEXT
+    EGLint visual_attr[] = {
+            EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+            EGL_RED_SIZE, 8,
+            EGL_GREEN_SIZE, 8,
+            EGL_BLUE_SIZE, 8,
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+            EGL_NONE
+    };
+
+    EGLConfig cfg = NULL;
+    EGLint cfg_count = 0;
+
+    EGLint attr[] = {
+            EGL_CONTEXT_OPENGL_PROFILE_MASK,
+            EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT,
+            EGL_CONTEXT_MAJOR_VERSION, 2,
+            EGL_CONTEXT_MINOR_VERSION, 0,
+            EGL_NONE,
+    };
+
+    hw_interop.egl_display = eglGetDisplay(hw_interop.x11_display);
+    if (hw_interop.egl_display == EGL_NO_DISPLAY) {
+        av_log(NULL, AV_LOG_ERROR, "eglGetDisplay failed\n");
+        return -1;
+    }
+
+    if (!eglInitialize(hw_interop.egl_display, NULL, NULL)) {
+        av_log(NULL, AV_LOG_ERROR, "eglInitialize failed\n");
+        return -1;
+    }
+
+    /*
+    av_log(NULL, AV_LOG_INFO, "EGL vendor %s, version %s, extensions %s, display %p\n",
+           eglQueryString(hw_interop.egl_display, EGL_VENDOR),
+           eglQueryString(hw_interop.egl_display, EGL_VERSION),
+           eglQueryString(hw_interop.egl_display, EGL_EXTENSIONS),
+           hw_interop.egl_display);
+    */
+
+    if (!eglBindAPI(EGL_OPENGL_API)) {
+        av_log(NULL, AV_LOG_ERROR, "Cannot bind EGL API\n");
+        return -1;
+    }
+
+    if (eglChooseConfig(hw_interop.egl_display, visual_attr, &cfg, 1, &cfg_count) != EGL_TRUE
+        || cfg_count == 0) {
+        av_log(NULL, AV_LOG_ERROR, "Cannot choose EGL configuration\n");
+        return -1;
+    }
+
+    /* Create a drawing surface */
+    hw_interop.egl_surface = eglCreateWindowSurface(hw_interop.egl_display,
+                                                    cfg, hw_interop.x11_window, NULL);
+    if (hw_interop.egl_surface == EGL_NO_SURFACE) {
+        av_log(NULL, AV_LOG_ERROR, "Cannot create EGL window surface\n");
+        return -1;
+    }
+
+    hw_interop.egl_ctx = eglCreateContext(hw_interop.egl_display, cfg, EGL_NO_CONTEXT, attr);
+    if (hw_interop.egl_ctx == EGL_NO_CONTEXT) {
+        av_log(NULL, AV_LOG_ERROR, "Cannot create EGL context\n");
+        return -1;
+    }
+    eglMakeCurrent(hw_interop.egl_display, hw_interop.egl_surface, hw_interop.egl_surface, hw_interop.egl_ctx);
+#endif
+
     hw_interop.egl_display = eglGetCurrentDisplay();
     hw_interop.egl_surface = eglGetCurrentSurface(EGL_DRAW);
     if (hw_interop.egl_display == EGL_NO_DISPLAY ||
@@ -4609,14 +4679,17 @@ int main(int argc, char **argv)
             flags |= SDL_WINDOW_BORDERLESS;
         else
             flags |= SDL_WINDOW_RESIZABLE;
+#if !CREATE_OUR_EGL_CONTEXT
         flags |= SDL_WINDOW_OPENGL;
         SDL_SetHint(SDL_HINT_VIDEO_X11_FORCE_EGL, "1");
+#endif
         window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
         SDL_GL_SetSwapInterval(0);
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+#if !CREATE_OUR_EGL_CONTEXT
         if (window) {
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (!renderer) {
@@ -4632,6 +4705,7 @@ int main(int argc, char **argv)
             av_log(NULL, AV_LOG_FATAL, "Failed to create window or renderer: %s", SDL_GetError());
             do_exit(NULL);
         }
+#endif
         if (video_get_native_window() < 0) {
             // Just skip in the case of error
             av_log(NULL, AV_LOG_ERROR, "get native window failed\n");
