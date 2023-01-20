@@ -6395,7 +6395,7 @@ if enabled sdl2; then
     if test $target_os = "mingw32"; then
         sdl2_extralibs=$(filter_out '-mwindows' $sdl2_extralibs)
     fi
-    sdl2_extralibs="$sdl2_extralibs -lEGL"
+    sdl2_extralibs="$sdl2_extralibs -lEGL -lGL"
 fi
 
 if enabled decklink; then
