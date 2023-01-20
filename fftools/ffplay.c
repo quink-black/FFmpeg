@@ -323,7 +323,7 @@ typedef struct ShaderSource {
 } ShaderSource;
 
 typedef struct GlContext {
-    SDL_GLContext ctx;
+    EGLContext ctx;
 
     int window_width;
     int window_height;
@@ -348,6 +348,7 @@ typedef struct GlContext {
     int tex_format[3];
     int tex_internal_format[3];
 } GlContext;
+
 typedef struct HwInterop {
     const char *name;
     enum AVHWDeviceType type;
@@ -1456,13 +1457,12 @@ static int video_gl_init(VideoState *is)
     if (ret)
         return ret;
 
-    // Create OpenGL Context
-    gl_context.ctx = SDL_GL_CreateContext(window);
-    if (!gl_context.ctx) {
-        av_log(NULL, AV_LOG_ERROR, "SDL_GL_CreateContext failed\n");
+    // Check OpenGL Context
+    if (!hw_interop.egl_ctx) {
+        av_log(NULL, AV_LOG_ERROR, "No OpenGL context\n");
         return -1;
     }
-    SDL_GL_MakeCurrent(window, gl_context.ctx);
+    eglMakeCurrent(hw_interop.egl_display, hw_interop.egl_surface, hw_interop.egl_surface, hw_interop.egl_ctx);
 
     video_gl_dump_version();
 
@@ -1484,15 +1484,14 @@ static int video_gl_init(VideoState *is)
     if (ret)
         return ret;
     ret = video_gl_setup_texture(vp->frame);
+    if (!ret)
+        gl_context.ctx = hw_interop.egl_ctx;
     return ret;
 }
 
 static void video_gl_destroy(void)
 {
-    if (!gl_context.ctx)
-        return;
-    SDL_GL_DeleteContext(gl_context.ctx);
-    gl_context.ctx = NULL;
+    gl_context.ctx = EGL_NO_CONTEXT;
 }
 
 static void vaapi_device_log_error(void *context, const char *message)
@@ -1509,7 +1508,7 @@ static void vaapi_device_log_info(void *context, const char *message)
     av_log(ctx, AV_LOG_INFO, "libva: %s", message);
 }
 
-static int video_setup_egl(void)
+static int video_egl_init(void)
 {
     hw_interop.egl_display = eglGetCurrentDisplay();
     hw_interop.egl_surface = eglGetCurrentSurface(EGL_DRAW);
@@ -1520,6 +1519,10 @@ static int video_setup_egl(void)
                hw_interop.egl_display, hw_interop.egl_surface);
         return -1;
     }
+    av_log(NULL, AV_LOG_INFO, "EGL vendor %s, version %s, extension %s\n",
+           eglQueryString(hw_interop.egl_display, EGL_VENDOR),
+           eglQueryString(hw_interop.egl_display, EGL_VERSION),
+           eglQueryString(hw_interop.egl_display, EGL_EXTENSIONS));
 
     hw_interop.eglCreateImageKHR = (void*)eglGetProcAddress("eglCreateImageKHR");
     hw_interop.eglDestroyImageKHR = (void*)eglGetProcAddress("eglDestroyImageKHR");
@@ -1532,8 +1535,29 @@ static int video_setup_egl(void)
         av_log(NULL, AV_LOG_ERROR, "EGL doesn't support glEGLImageTargetTexture2DOES\n");
         return -1;
     }
+
+    hw_interop.egl_ctx = eglGetCurrentContext();
+    if (hw_interop.egl_ctx == EGL_NO_CONTEXT) {
+        av_log(NULL, AV_LOG_ERROR, "EGL no context\n");
+        return -1;
+    }
+
     return 0;
 }
+
+static void video_egl_destroy(void)
+{
+    if (hw_interop.egl_display != EGL_NO_DISPLAY)
+        eglMakeCurrent(hw_interop.egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    /*
+    eglDestroyContext(hw_interop.egl_display, hw_interop.egl_ctx);
+    eglDestroySurface(hw_interop.egl_display, hw_interop.egl_surface);
+    */
+    hw_interop.egl_surface = EGL_NO_SURFACE;
+    hw_interop.egl_ctx = EGL_NO_CONTEXT;
+    hw_interop.egl_display = EGL_NO_DISPLAY;
+}
+
 
 static int video_get_native_window(void)
 {
@@ -1643,9 +1667,12 @@ static int video_create_hw_interop(AVCodecContext *ctx)
 
     return 0;
 }
+
 static void video_destroy_hwaccel(void)
 {
-    av_buffer_unref(hw_interop.device_ref);
+    av_buffer_unref(&hw_interop.device_ref);
+    vaTerminate(hw_interop.va_display);
+    hw_interop.va_display = NULL;
 }
 
 static void video_gl_destroy_egl_img(void)
@@ -1716,12 +1743,12 @@ static void video_gl_draw(Frame *vp)
     AVFrame *frame = vp->frame;
     GLint location;
 
-    if (!gl_context.ctx) {
+    if (!hw_interop.egl_ctx) {
         av_log(NULL, AV_LOG_ERROR, "%s, no OpenGL context\n", __func__);
         return;
     }
 
-    SDL_GL_MakeCurrent(window, gl_context.ctx);
+    eglMakeCurrent(hw_interop.egl_display, hw_interop.egl_surface, hw_interop.egl_surface, hw_interop.egl_ctx);
     glUseProgram(gl_context.program);
 
     if (screen_width && screen_height &&
@@ -1753,7 +1780,7 @@ static void video_gl_draw(Frame *vp)
     // Draw the video rectangle
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
-    SDL_GL_SwapWindow(window);
+    eglSwapBuffers(hw_interop.egl_display, hw_interop.egl_surface);
     if (frame->hw_frames_ctx)
         video_gl_destroy_egl_img();
 
@@ -2111,6 +2138,9 @@ static void do_exit(VideoState *is)
     if (is) {
         stream_close(is);
     }
+    video_destroy_hwaccel();
+    video_gl_destroy();
+    video_egl_destroy();
     if (renderer)
         SDL_DestroyRenderer(renderer);
     if (window)
@@ -4603,8 +4633,8 @@ int main(int argc, char **argv)
             do_exit(NULL);
         }
 
-        if (video_setup_egl() < 0) {
-            av_log(NULL, AV_LOG_ERROR, "video_create_egl failed\n");
+        if (video_egl_init() < 0) {
+            av_log(NULL, AV_LOG_ERROR, "video_egl_init failed\n");
             do_exit(NULL);
         }
     }
