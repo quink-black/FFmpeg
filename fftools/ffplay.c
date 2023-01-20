@@ -1783,6 +1783,25 @@ static void video_gl_draw(Frame *vp)
     SDL_GL_SwapWindow(window);
     if (frame->hw_frames_ctx)
         video_gl_destroy_egl_img();
+
+    if (0) {
+        static double last_time = 0.0;
+        double time = av_gettime_relative() / 1000000.0;
+        static int64_t frame_count = -1;
+        double fps;
+
+        frame_count++;
+
+        if (last_time == 0.0)
+            last_time = time;
+
+        if (time - last_time < 1.0)
+            return;
+        fps = frame_count / (time - last_time);
+        last_time = time;
+        frame_count = 0;
+        av_log(NULL, AV_LOG_WARNING, "fps %f\n", fps);
+    }
 }
 
 static void video_image_display(VideoState *is)
