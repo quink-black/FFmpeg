@@ -63,7 +63,6 @@
 #include <unistd.h>
 #include <va/va_x11.h>
 #include <va/va_drmcommon.h>
-#include <drm/drm_fourcc.h>
 #include "libavutil/hwcontext_vaapi.h"
 
 
@@ -1207,7 +1206,7 @@ static int video_gl_check_error(const char *func, int line)
     GLenum glError = glGetError();
     switch (glError) {
     case GL_NO_ERROR:
-        av_log(NULL, AV_LOG_INFO, "%s:%d, success\n", func, line);
+        av_log(NULL, AV_LOG_VERBOSE, "%s:%d, success\n", func, line);
         return 0;
     case GL_INVALID_ENUM:
         av_log(NULL, AV_LOG_ERROR, "%s:%d, GL_INVALID_ENUM\n", func, line);
@@ -1589,9 +1588,10 @@ static int video_egl_init(void)
                hw_interop.egl_display, hw_interop.egl_surface);
         return -1;
     }
-    av_log(NULL, AV_LOG_INFO, "EGL vendor %s, version %s, extension %s\n",
+    av_log(NULL, AV_LOG_INFO, "EGL vendor %s, version %s\n",
            eglQueryString(hw_interop.egl_display, EGL_VENDOR),
-           eglQueryString(hw_interop.egl_display, EGL_VERSION),
+           eglQueryString(hw_interop.egl_display, EGL_VERSION));
+    av_log(NULL, AV_LOG_VERBOSE, "EGL extension %s\n",
            eglQueryString(hw_interop.egl_display, EGL_EXTENSIONS));
 
     hw_interop.eglCreateImageKHR = (void*)eglGetProcAddress("eglCreateImageKHR");
