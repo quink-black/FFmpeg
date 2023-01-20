@@ -3551,18 +3551,23 @@ static int stream_component_open(VideoState *is, int stream_index)
         avctx->flags2 |= AV_CODEC_FLAG2_FAST;
 
     opts = filter_codec_opts(codec_opts, avctx->codec_id, ic, ic->streams[stream_index], codec);
-    if (!av_dict_get(opts, "threads", NULL, 0))
-        av_dict_set(&opts, "threads", "auto", 0);
-    if (stream_lowres)
-        av_dict_set_int(&opts, "lowres", stream_lowres, 0);
-    if (avctx->codec_type == AVMEDIA_TYPE_VIDEO || avctx->codec_type == AVMEDIA_TYPE_AUDIO)
-        av_dict_set(&opts, "refcounted_frames", "1", 0);
-
     if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
         ret = video_create_hw_interop(avctx);
         if (ret < 0)
             goto fail;
     }
+    if (!av_dict_get(opts, "threads", NULL, 0)) {
+        // Disable multi-threads for hardware decoding
+        if (hw_interop.device_ref)
+            av_dict_set(&opts, "threads", "1", 0);
+        else
+            av_dict_set(&opts, "threads", "auto", 0);
+    }
+    if (stream_lowres)
+        av_dict_set_int(&opts, "lowres", stream_lowres, 0);
+    if (avctx->codec_type == AVMEDIA_TYPE_VIDEO || avctx->codec_type == AVMEDIA_TYPE_AUDIO)
+        av_dict_set(&opts, "refcounted_frames", "1", 0);
+
     if ((ret = avcodec_open2(avctx, codec, &opts)) < 0) {
         goto fail;
     }
