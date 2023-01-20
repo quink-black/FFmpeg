@@ -55,8 +55,17 @@
 
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL.h>
+#include <SDL_egl.h>
 #include <SDL_thread.h>
 #include <SDL_opengl.h>
+#include <SDL_syswm.h>
+
+#include <unistd.h>
+#include <va/va_x11.h>
+#include <va/va_drmcommon.h>
+#include <drm/drm_fourcc.h>
+#include "libavutil/hwcontext_vaapi.h"
+
 
 #include "cmdutils.h"
 
@@ -333,11 +342,34 @@ typedef struct GlContext {
     int tex_count;
     GLuint tex[3];
     float tex_right;
+    float tex_bottom;
     int tex_width[3];
     int tex_height[3];
     int tex_format[3];
     int tex_internal_format[3];
 } GlContext;
+typedef struct HwInterop {
+    const char *name;
+    enum AVHWDeviceType type;
+
+    AVBufferRef *device_ref;
+
+    // Device specific data
+    Display *x11_display;
+    Window x11_window;
+    VADisplay va_display;
+
+    EGLDisplay egl_display;
+    EGLSurface egl_surface;
+    EGLContext egl_ctx;
+    PFNEGLCREATEIMAGEKHRPROC eglCreateImageKHR;
+    PFNEGLDESTROYIMAGEKHRPROC eglDestroyImageKHR;
+    PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES;
+    VADRMPRIMESurfaceDescriptor prime;
+    EGLImage egl_img[2];
+} HwInterop;
+
+static HwInterop hw_interop;
 
 static GlContext gl_context;
 
@@ -1011,10 +1043,11 @@ static void set_sdl_yuv_conversion_mode(AVFrame *frame)
 #define VERTEX_SHADER                                   \
     "attribute vec4 a_position;    \n"                  \
     "attribute vec2 a_uv;          \n"                  \
+    "uniform vec2 u_TexCoordScale; \n"                  \
     "varying vec2 v_TexCoordinate; \n"                  \
     "void main()                   \n"                  \
     "{                             \n"                  \
-    "    v_TexCoordinate = a_uv;   \n"                  \
+    "    v_TexCoordinate = a_uv * u_TexCoordScale; \n"  \
     "    gl_Position = vec4(a_position.xyz, 1.0);  \n"  \
     "}                             \n"                  \
 
@@ -1196,10 +1229,24 @@ static int video_gl_check_error(const char *func, int line)
 
 static int video_gl_setup_format(AVFrame *frame)
 {
-    if (frame->format == AV_PIX_FMT_YUV420P) {
+    enum AVPixelFormat format = frame->format;
+
+    if (format == AV_PIX_FMT_VAAPI) {
+        AVHWFramesContext *hwframes_ctx = (AVHWFramesContext *) frame->hw_frames_ctx->data;
+        if (hwframes_ctx->sw_format == AV_PIX_FMT_NV12 ||
+            hwframes_ctx->sw_format == AV_PIX_FMT_P010LE ||
+            hwframes_ctx->sw_format == AV_PIX_FMT_P016LE)
+            format = hwframes_ctx->sw_format;
+        else
+            av_log(NULL, AV_LOG_WARNING, "Unsupported vaapi sw pix fmt %s\n",
+                   av_get_pix_fmt_name(hwframes_ctx->sw_format));
+    }
+
+    if (format == AV_PIX_FMT_YUV420P) {
         gl_context.shader_source = yuv_shader;
         gl_context.tex_count = 3;
-        gl_context.tex_right = (float)frame->width / frame->linesize[0];
+        if (frame->linesize[0] > 0)
+            gl_context.tex_right = (float)frame->width / frame->linesize[0];
 
         for (int i = 0; i < 3; i++) {
             gl_context.tex_format[i] = GL_RED;
@@ -1209,10 +1256,11 @@ static int video_gl_setup_format(AVFrame *frame)
             if (i > 0)
                 gl_context.tex_height[i] /= 2;
         }
-    } else if (frame->format == AV_PIX_FMT_NV12) {
+    } else if (format == AV_PIX_FMT_NV12) {
         gl_context.shader_source = nv12_shader;
         gl_context.tex_count = 2;
-        gl_context.tex_right = (float)frame->width / frame->linesize[0];
+        if (frame->linesize[0] > 0)
+            gl_context.tex_right = (float)frame->width / frame->linesize[0];
         gl_context.tex_format[0] = GL_RED;
         gl_context.tex_internal_format[0] = GL_RED;
         gl_context.tex_format[1] = GL_RG;
@@ -1221,18 +1269,34 @@ static int video_gl_setup_format(AVFrame *frame)
         gl_context.tex_width[1] = frame->linesize[1] / 2;
         gl_context.tex_height[0] = frame->height;
         gl_context.tex_height[1] = frame->height / 2;
-    } else if (frame->format == AV_PIX_FMT_RGBA) {
+    } else if (format == AV_PIX_FMT_P010LE || format == AV_PIX_FMT_P016LE) {
+        gl_context.shader_source = nv12_shader;
+        gl_context.tex_count = 2;
+        if (frame->linesize[0] > 0)
+            gl_context.tex_right = (float)frame->width / frame->linesize[0];
+        gl_context.tex_format[0] = GL_R16;
+        gl_context.tex_internal_format[0] = GL_R16;
+        gl_context.tex_format[1] = GL_RG;
+        gl_context.tex_internal_format[1] = GL_RG16;
+        gl_context.tex_width[0] = frame->linesize[0] / 2;
+        gl_context.tex_width[1] = frame->linesize[1] / 4;
+        gl_context.tex_height[0] = frame->height / 2;
+        gl_context.tex_height[1] = frame->height / 4;
+
+    } else if (format == AV_PIX_FMT_RGBA) {
         gl_context.shader_source = rgb_shader;
         gl_context.tex_count = 1;
-        gl_context.tex_right = (float)(frame->width * 4) / frame->linesize[0];
+        if (frame->linesize[0] > 0)
+            gl_context.tex_right = (float)(frame->width * 4) / frame->linesize[0];
         gl_context.tex_format[0] = GL_RGBA;
         gl_context.tex_internal_format[0] = GL_RGBA;
         gl_context.tex_width[0] = frame->linesize[0] / 4;
         gl_context.tex_height[0] = frame->height;
-    } else if (frame->format == AV_PIX_FMT_RGB24) {
+    } else if (format == AV_PIX_FMT_RGB24) {
         gl_context.shader_source = rgb_shader;
         gl_context.tex_count = 1;
-        gl_context.tex_right = (float)(frame->width * 3) / frame->linesize[0];
+        if (frame->linesize[0] > 0)
+            gl_context.tex_right = (float)(frame->width * 3) / frame->linesize[0];
         gl_context.tex_format[0] = GL_RGB;
         gl_context.tex_internal_format[0] = GL_RGBA;
         gl_context.tex_width[0] = frame->linesize[0] / 3;
@@ -1243,6 +1307,10 @@ static int video_gl_setup_format(AVFrame *frame)
                av_get_pix_fmt_name(frame->format));
         return -1;
     }
+
+    if (gl_context.tex_right <= 0.0f || gl_context.tex_right > 1.0f)
+        gl_context.tex_right = 1.0f;
+    gl_context.tex_bottom = 1.0f;
 
     av_log(NULL, AV_LOG_INFO, "%s with %s success\n", __func__,
            av_get_pix_fmt_name(frame->format));
@@ -1308,8 +1376,8 @@ static int video_gl_setup_vertex(AVFrame *frame)
     GLfloat vertices[] = {
             -1.0f, 1.0f, 0.f, 0.f,
             -1.0f, -1.0f, 0.f, 1.f,
-            1.0f, 1.0f, gl_context.tex_right, 0.f,
-            1.0f, -1.0f, gl_context.tex_right, 1.f};
+            1.0f, 1.0f, 1.0f, 0.f,
+            1.0f, -1.0f, 1.0f, 1.f};
 
     // Create Vertex Array Object
     glGenVertexArrays(1, &gl_context.vao);
@@ -1347,7 +1415,7 @@ static int video_gl_setup_texture(AVFrame *frame)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
+        /*
         glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
                      gl_context.tex_width[i],
                      gl_context.tex_height[i],
@@ -1355,6 +1423,7 @@ static int video_gl_setup_texture(AVFrame *frame)
                      gl_context.tex_format[i],
                      GL_UNSIGNED_BYTE,
                      NULL);
+                     */
     }
     return video_gl_check_error(__func__, __LINE__);
 }
@@ -1426,22 +1495,255 @@ static void video_gl_destroy(void)
     gl_context.ctx = NULL;
 }
 
+static void vaapi_device_log_error(void *context, const char *message)
+{
+    AVHWDeviceContext *ctx = context;
+
+    av_log(ctx, AV_LOG_ERROR, "libva: %s", message);
+}
+
+static void vaapi_device_log_info(void *context, const char *message)
+{
+    AVHWDeviceContext *ctx = context;
+
+    av_log(ctx, AV_LOG_INFO, "libva: %s", message);
+}
+
+static int video_setup_egl(void)
+{
+    hw_interop.egl_display = eglGetCurrentDisplay();
+    hw_interop.egl_surface = eglGetCurrentSurface(EGL_DRAW);
+    if (hw_interop.egl_display == EGL_NO_DISPLAY ||
+            hw_interop.egl_surface == EGL_NO_SURFACE) {
+        av_log(NULL, AV_LOG_ERROR,
+               "No egl display or surface, display %p, surface %p\n",
+               hw_interop.egl_display, hw_interop.egl_surface);
+        return -1;
+    }
+
+    hw_interop.eglCreateImageKHR = (void*)eglGetProcAddress("eglCreateImageKHR");
+    hw_interop.eglDestroyImageKHR = (void*)eglGetProcAddress("eglDestroyImageKHR");
+    if (!hw_interop.eglCreateImageKHR || !hw_interop.eglDestroyImageKHR) {
+        av_log(NULL, AV_LOG_ERROR, "EGL doesn't support eglCreateImageKHR/eglDestroyImageKHR\n");
+        return -1;
+    }
+    hw_interop.glEGLImageTargetTexture2DOES = (void*)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    if (!hw_interop.glEGLImageTargetTexture2DOES) {
+        av_log(NULL, AV_LOG_ERROR, "EGL doesn't support glEGLImageTargetTexture2DOES\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int video_get_native_window(void)
+{
+    SDL_SysWMinfo window_info = {};
+
+    SDL_VERSION(&window_info.version);
+    SDL_GetWindowWMInfo(window, &window_info);
+    if (window_info.subsystem != SDL_SYSWM_X11) {
+        av_log(NULL, AV_LOG_WARNING, "Unsupported window system %d\n", window_info.subsystem);
+        return -1;
+    }
+    if (!window_info.info.x11.display) {
+        av_log(NULL, AV_LOG_WARNING, "Missing x11 display\n");
+        return -1;
+    }
+
+    hw_interop.x11_display = window_info.info.x11.display;
+    hw_interop.x11_window = window_info.info.x11.window;
+
+    return 0;
+}
+
+static int video_check_vaapi_for_codec(AVCodecContext *ctx)
+{
+    enum AVCodecID codecs[] = {
+            AV_CODEC_ID_H264,
+            AV_CODEC_ID_HEVC,
+            AV_CODEC_ID_MPEG2VIDEO,
+            AV_CODEC_ID_MPEG4,
+    };
+
+    for (int i = 0; i < FF_ARRAY_ELEMS(codecs); i++) {
+        if (ctx->codec_id == codecs[i])
+            return 0;
+    }
+
+    av_log(ctx, AV_LOG_INFO, "Skip hwaccel for codec %s\n",
+           avcodec_get_name(ctx->codec_id));
+    return -1;
+}
+
+static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts)
+{
+    return AV_PIX_FMT_VAAPI;
+}
+
+static int video_create_vaapi(AVCodecContext *ctx)
+{
+    AVHWDeviceContext *device_ctx = NULL;
+    AVVAAPIDeviceContext *va_ctx = NULL;
+    int major, minor;
+    int ret;
+
+    hw_interop.va_display = vaGetDisplay(hw_interop.x11_display);
+    if (!hw_interop.va_display) {
+        av_log(ctx, AV_LOG_ERROR, "Cannot open a VA display from X11 display\n");
+        return -1;
+    }
+
+    ret = vaInitialize(hw_interop.va_display, &major, &minor);
+    if (ret != VA_STATUS_SUCCESS) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI connection: %d (%s).\n",
+               ret, vaErrorStr(ret));
+        return AVERROR(EIO);
+    }
+    av_log(ctx, AV_LOG_INFO, "Initialised VAAPI connection: "
+                             "version %d.%d\n", major, minor);
+
+    vaSetErrorCallback(hw_interop.va_display, &vaapi_device_log_error, ctx);
+    vaSetInfoCallback(hw_interop.va_display, &vaapi_device_log_info, ctx);
+
+    hw_interop.type = AV_HWDEVICE_TYPE_VAAPI;
+    hw_interop.device_ref = av_hwdevice_ctx_alloc(hw_interop.type);
+    if (!hw_interop.device_ref) {
+        av_log(ctx, AV_LOG_ERROR, "av_hwdevice_ctx_alloc failed\n");
+        return AVERROR(ENOMEM);
+    }
+
+    device_ctx = (AVHWDeviceContext *)hw_interop.device_ref->data;
+    va_ctx = device_ctx->hwctx;
+    va_ctx->display = hw_interop.va_display;
+    ret = av_hwdevice_ctx_init(hw_interop.device_ref);
+    if (ret < 0) {
+        av_log(ctx, AV_LOG_ERROR, "av_hwdevice_ctx_init failed, %s\n", av_err2str(ret));
+        return ret;
+    }
+
+    hw_interop.name = av_hwdevice_get_type_name(hw_interop.type);
+    ctx->hw_device_ctx = av_buffer_ref(hw_interop.device_ref);
+    ctx->get_format = get_hw_format;
+    av_log(ctx, AV_LOG_INFO, "Create hwaccel %s success\n", hw_interop.name);
+    return 0;
+}
+
+static int video_create_hw_interop(AVCodecContext *ctx)
+{
+    int ret;
+
+    if (video_check_vaapi_for_codec(ctx) < 0) {
+        // Skip vaapi hardware decoding
+        return 0;
+    }
+
+    ret = video_create_vaapi(ctx);
+    if (ret)
+        return ret;
+
+    return 0;
+}
+static void video_destroy_hwaccel(void)
+{
+    av_buffer_unref(hw_interop.device_ref);
+}
+
+static void video_gl_destroy_egl_img(void)
+{
+    for (int i = 0; i < gl_context.tex_count; i++) {
+        if (!hw_interop.egl_img[i])
+            break;
+        glActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        hw_interop.eglDestroyImageKHR(hw_interop.egl_display, hw_interop.egl_img[i]);
+        hw_interop.egl_img[i] = NULL;
+        close(hw_interop.prime.objects[i].fd);
+    }
+}
+
+static void video_gl_create_egl_img(AVFrame *frame)
+{
+    VASurfaceID va_surface;
+
+    va_surface = (VASurfaceID) frame->data[3];
+    if (vaExportSurfaceHandle(hw_interop.va_display, va_surface,
+                              VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
+                              VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+                              &hw_interop.prime) !=
+        VA_STATUS_SUCCESS) {
+        av_log(NULL, AV_LOG_ERROR, "vaExportSurfaceHandle failed\n");
+        return;
+    }
+    if (hw_interop.prime.fourcc != VA_FOURCC_NV12 &&
+            hw_interop.prime.fourcc != VA_FOURCC_P010) {
+        av_log(NULL, AV_LOG_WARNING, "Export format check failed, %s\n",
+               av_fourcc2str(hw_interop.prime.fourcc));
+    }
+    vaSyncSurface(hw_interop.va_display, va_surface);
+
+    for (int i = 0; i < 2; i++) {
+        uint32_t obj_idx = hw_interop.prime.layers[i].object_index[0];
+
+        EGLint attribs[] = {
+                EGL_LINUX_DRM_FOURCC_EXT, hw_interop.prime.layers[i].drm_format,
+                EGL_WIDTH, hw_interop.prime.width / (i + 1),
+                EGL_HEIGHT, hw_interop.prime.height / (i + 1),
+                EGL_DMA_BUF_PLANE0_FD_EXT, hw_interop.prime.objects[obj_idx].fd,
+                EGL_DMA_BUF_PLANE0_OFFSET_EXT, hw_interop.prime.layers[i].offset[0],
+                EGL_DMA_BUF_PLANE0_PITCH_EXT, hw_interop.prime.layers[i].pitch[0],
+                EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, hw_interop.prime.objects[obj_idx].drm_format_modifier & 0xffffffff,
+                EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT, hw_interop.prime.objects[obj_idx].drm_format_modifier >> 32,
+                EGL_NONE
+        };
+
+        hw_interop.egl_img[i] = hw_interop.eglCreateImageKHR(hw_interop.egl_display, EGL_NO_CONTEXT,
+                                                             EGL_LINUX_DMA_BUF_EXT, NULL,
+                                                             attribs);
+        if (!hw_interop.egl_img[i]) {
+            av_log(NULL, AV_LOG_ERROR, "eglCreateImage failed\n");
+            exit(-1);
+        }
+    }
+
+    if (hw_interop.prime.width > frame->width)
+        gl_context.tex_right = (float)frame->width / hw_interop.prime.width;
+    if (hw_interop.prime.height > frame->height)
+        gl_context.tex_bottom = (float)frame->height / hw_interop.prime.height;
+}
+
 static void video_gl_draw(Frame *vp)
 {
+    AVFrame *frame = vp->frame;
+    GLint location;
+
     if (!gl_context.ctx) {
         av_log(NULL, AV_LOG_ERROR, "%s, no OpenGL context\n", __func__);
         return;
     }
+
+    SDL_GL_MakeCurrent(window, gl_context.ctx);
+    glUseProgram(gl_context.program);
+
     if (screen_width && screen_height &&
         (screen_width != gl_context.window_width || screen_height != gl_context.window_height))
         glViewport(0, 0, screen_width, screen_height);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+
+    if (frame->hw_frames_ctx)
+        video_gl_create_egl_img(frame);
+
+    location = glGetUniformLocation(gl_context.program, "u_TexCoordScale");
+    glUniform2f(location, gl_context.tex_right, gl_context.tex_bottom);
     for (int i = 0; i < gl_context.tex_count; i++) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, gl_context.tex[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
+
+        if (frame->hw_frames_ctx)
+            hw_interop.glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, hw_interop.egl_img[i]);
+        else
+            glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
                      gl_context.tex_width[i], gl_context.tex_height[i],
                      0,
                      gl_context.tex_format[i],
@@ -1452,6 +1754,8 @@ static void video_gl_draw(Frame *vp)
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
     SDL_GL_SwapWindow(window);
+    if (frame->hw_frames_ctx)
+        video_gl_destroy_egl_img();
 }
 
 static void video_image_display(VideoState *is)
@@ -2649,6 +2953,15 @@ static int video_thread(void *arg)
         if (!ret)
             continue;
 
+        if (frame->hw_frames_ctx) {
+            duration = (frame_rate.num && frame_rate.den ? av_q2d((AVRational) {frame_rate.den, frame_rate.num}) : 0);
+            pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
+            ret = queue_picture(is, frame, pts, duration, frame->pkt_pos, is->viddec.pkt_serial);
+            av_frame_unref(frame);
+            if (ret < 0)
+                goto the_end;
+            continue;
+        }
 #if CONFIG_AVFILTER
         if (   last_w != frame->width
             || last_h != frame->height
@@ -3120,6 +3433,12 @@ static int stream_component_open(VideoState *is, int stream_index)
         av_dict_set_int(&opts, "lowres", stream_lowres, 0);
     if (avctx->codec_type == AVMEDIA_TYPE_VIDEO || avctx->codec_type == AVMEDIA_TYPE_AUDIO)
         av_dict_set(&opts, "refcounted_frames", "1", 0);
+
+    if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+        ret = video_create_hw_interop(avctx);
+        if (ret < 0)
+            goto fail;
+    }
     if ((ret = avcodec_open2(avctx, codec, &opts)) < 0) {
         goto fail;
     }
@@ -4237,6 +4556,7 @@ int main(int argc, char **argv)
         else
             flags |= SDL_WINDOW_RESIZABLE;
         flags |= SDL_WINDOW_OPENGL;
+        SDL_SetHint(SDL_HINT_VIDEO_X11_FORCE_EGL, "1");
         window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
@@ -4256,6 +4576,16 @@ int main(int argc, char **argv)
         }
         if (!window || !renderer || !renderer_info.num_texture_formats) {
             av_log(NULL, AV_LOG_FATAL, "Failed to create window or renderer: %s", SDL_GetError());
+            do_exit(NULL);
+        }
+        if (video_get_native_window() < 0) {
+            // Just skip in the case of error
+            av_log(NULL, AV_LOG_ERROR, "get native window failed\n");
+            do_exit(NULL);
+        }
+
+        if (video_setup_egl() < 0) {
+            av_log(NULL, AV_LOG_ERROR, "video_create_egl failed\n");
             do_exit(NULL);
         }
     }
