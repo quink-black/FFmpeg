@@ -348,7 +348,6 @@ typedef struct GlContext {
     int tex_format[3];
     int tex_internal_format[3];
 } GlContext;
-
 typedef struct HwInterop {
     const char *name;
     enum AVHWDeviceType type;
@@ -360,17 +359,12 @@ typedef struct HwInterop {
     Window x11_window;
     VADisplay va_display;
 
-    PFNEGLGETCURRENTDISPLAYPROC eglGetCurrentDisplay;
-    PFNEGLGETCURRENTSURFACEPROC eglGetCurrentSurface;
-    PFNEGLQUERYSTRINGPROC eglQueryString;
-    PFNEGLCREATEIMAGEKHRPROC eglCreateImageKHR;
-    PFNEGLDESTROYIMAGEKHRPROC eglDestroyImageKHR;
-    PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES;
-
     EGLDisplay egl_display;
     EGLSurface egl_surface;
     EGLContext egl_ctx;
-
+    PFNEGLCREATEIMAGEKHRPROC eglCreateImageKHR;
+    PFNEGLDESTROYIMAGEKHRPROC eglDestroyImageKHR;
+    PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES;
     VADRMPRIMESurfaceDescriptor prime;
     EGLImage egl_img[2];
 } HwInterop;
@@ -1517,24 +1511,8 @@ static void vaapi_device_log_info(void *context, const char *message)
 
 static int video_setup_egl(void)
 {
-    int ret;
-    ret = SDL_GL_LoadLibrary(NULL);
-    if (ret < 0) {
-        av_log(NULL, AV_LOG_ERROR, "SDL_GL_LoadLibrary failed, %s\n", SDL_GetError());
-        return -1;
-    }
-
-    hw_interop.eglGetCurrentDisplay = SDL_GL_GetProcAddress("eglGetCurrentDisplay");
-    hw_interop.eglGetCurrentSurface = SDL_GL_GetProcAddress("eglGetCurrentSurface");
-    hw_interop.eglQueryString = SDL_GL_GetProcAddress("eglQueryString");
-
-    if (!hw_interop.eglGetCurrentDisplay || !hw_interop.eglGetCurrentSurface) {
-        av_log(NULL, AV_LOG_ERROR, "GetProcAddress of EGL functions failed\n");
-        return -1;
-    }
-
-    hw_interop.egl_display = hw_interop.eglGetCurrentDisplay();
-    hw_interop.egl_surface = hw_interop.eglGetCurrentSurface(EGL_DRAW);
+    hw_interop.egl_display = eglGetCurrentDisplay();
+    hw_interop.egl_surface = eglGetCurrentSurface(EGL_DRAW);
     if (hw_interop.egl_display == EGL_NO_DISPLAY ||
             hw_interop.egl_surface == EGL_NO_SURFACE) {
         av_log(NULL, AV_LOG_ERROR,
@@ -1542,18 +1520,14 @@ static int video_setup_egl(void)
                hw_interop.egl_display, hw_interop.egl_surface);
         return -1;
     }
-    av_log(NULL, AV_LOG_INFO, "EGL vendor %s, version %s, extension %s\n",
-           hw_interop.eglQueryString(hw_interop.egl_display, EGL_VENDOR),
-           hw_interop.eglQueryString(hw_interop.egl_display, EGL_VERSION),
-           hw_interop.eglQueryString(hw_interop.egl_display, EGL_EXTENSIONS));
 
-    hw_interop.eglCreateImageKHR = (void*)SDL_GL_GetProcAddress("eglCreateImageKHR");
-    hw_interop.eglDestroyImageKHR = (void*)SDL_GL_GetProcAddress("eglDestroyImageKHR");
+    hw_interop.eglCreateImageKHR = (void*)eglGetProcAddress("eglCreateImageKHR");
+    hw_interop.eglDestroyImageKHR = (void*)eglGetProcAddress("eglDestroyImageKHR");
     if (!hw_interop.eglCreateImageKHR || !hw_interop.eglDestroyImageKHR) {
         av_log(NULL, AV_LOG_ERROR, "EGL doesn't support eglCreateImageKHR/eglDestroyImageKHR\n");
         return -1;
     }
-    hw_interop.glEGLImageTargetTexture2DOES = (void*)SDL_GL_GetProcAddress("glEGLImageTargetTexture2DOES");
+    hw_interop.glEGLImageTargetTexture2DOES = (void*)eglGetProcAddress("glEGLImageTargetTexture2DOES");
     if (!hw_interop.glEGLImageTargetTexture2DOES) {
         av_log(NULL, AV_LOG_ERROR, "EGL doesn't support glEGLImageTargetTexture2DOES\n");
         return -1;
@@ -1669,7 +1643,6 @@ static int video_create_hw_interop(AVCodecContext *ctx)
 
     return 0;
 }
-
 static void video_destroy_hwaccel(void)
 {
     av_buffer_unref(hw_interop.device_ref);
