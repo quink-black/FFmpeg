@@ -1650,17 +1650,22 @@ static int video_get_native_window(void)
     return 0;
 }
 
+typedef struct CodecToVAAPIMap {
+    enum AVCodecID codec_id;
+    VAProfile va_profile;
+} CodecToVAAPIMap;
+
+static CodecToVAAPIMap codec_to_vaapi_map[] = {
+        {AV_CODEC_ID_H264,       VAProfileH264High,},
+        {AV_CODEC_ID_HEVC,       VAProfileHEVCMain,},
+        {AV_CODEC_ID_MPEG2VIDEO, VAProfileMPEG2Main},
+        {AV_CODEC_ID_MPEG4,      VAProfileMPEG4Main},
+};
+
 static int video_check_vaapi_for_codec(AVCodecContext *ctx)
 {
-    enum AVCodecID codecs[] = {
-            AV_CODEC_ID_H264,
-            AV_CODEC_ID_HEVC,
-            AV_CODEC_ID_MPEG2VIDEO,
-            AV_CODEC_ID_MPEG4,
-    };
-
-    for (int i = 0; i < FF_ARRAY_ELEMS(codecs); i++) {
-        if (ctx->codec_id == codecs[i])
+    for (int i = 0; i < FF_ARRAY_ELEMS(codec_to_vaapi_map); i++) {
+        if (ctx->codec_id == codec_to_vaapi_map[i].codec_id)
             return 0;
     }
 
@@ -1672,6 +1677,49 @@ static int video_check_vaapi_for_codec(AVCodecContext *ctx)
 static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts)
 {
     return AV_PIX_FMT_VAAPI;
+}
+
+static int video_check_vaapi_profile(AVCodecContext *ctx)
+{
+    int max_num;
+    int num = 0;
+    int ret;
+    VAProfile *profile_list = NULL;
+    VAProfile target_profile;
+    int i;
+
+    for (i = 0; i < FF_ARRAY_ELEMS(codec_to_vaapi_map); i++) {
+        if (ctx->codec_id == codec_to_vaapi_map[i].codec_id) {
+            target_profile = codec_to_vaapi_map[i].va_profile;
+            break;
+        }
+    }
+    if (i == FF_ARRAY_ELEMS(codec_to_vaapi_map)) {
+        av_log(ctx, AV_LOG_ERROR, "Unknown codec to vaapi, shouldn't happen\n");
+        return -1;
+    }
+
+    max_num = vaMaxNumProfiles(hw_interop.va_display);
+    if (max_num <= 0)
+        return -1;
+
+    profile_list = av_malloc_array(max_num,  sizeof(*profile_list));
+    if (!profile_list)
+        return AVERROR(ENOMEM);
+
+    vaQueryConfigProfiles(hw_interop.va_display, profile_list, &num);
+    for (i = 0; i < num; i++) {
+        if (profile_list[i] == target_profile) {
+            ret = 0;
+            goto bailout;
+        }
+    }
+
+    // Doesn't supported by this device.
+    ret = -1;
+bailout:
+    av_free(profile_list);
+    return ret;
 }
 
 static int video_create_vaapi(AVCodecContext *ctx)
@@ -1695,6 +1743,14 @@ static int video_create_vaapi(AVCodecContext *ctx)
     }
     av_log(ctx, AV_LOG_INFO, "Initialised VAAPI connection: "
                              "version %d.%d\n", major, minor);
+
+    ret = video_check_vaapi_profile(ctx);
+    if (ret < 0) {
+        av_log(ctx, AV_LOG_WARNING,
+               "This device doesn't support VAAPI hardware decoding of %s, fallback to software decoding\n",
+               avcodec_get_name(ctx->codec_id));
+        return 0;
+    }
 
     vaSetErrorCallback(hw_interop.va_display, &vaapi_device_log_error, ctx);
     vaSetInfoCallback(hw_interop.va_display, &vaapi_device_log_info, ctx);
