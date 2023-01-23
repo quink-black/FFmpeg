@@ -1822,14 +1822,17 @@ static void video_gl_destroy_egl_img(void)
 static void video_gl_create_egl_img(AVFrame *frame)
 {
     VASurfaceID va_surface;
+    VAStatus status;
 
-    va_surface = (VASurfaceID) frame->data[3];
-    if (vaExportSurfaceHandle(hw_interop.va_display, va_surface,
-                              VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
-                              VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
-                              &hw_interop.prime) !=
-        VA_STATUS_SUCCESS) {
-        av_log(NULL, AV_LOG_ERROR, "vaExportSurfaceHandle failed\n");
+    va_surface = (VASurfaceID) (uintptr_t) frame->data[3];
+    status = vaExportSurfaceHandle(hw_interop.va_display, va_surface,
+                                   VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
+                                   VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+                                   &hw_interop.prime);
+    if (status != VA_STATUS_SUCCESS) {
+        av_log(NULL, AV_LOG_ERROR,
+               "vaExportSurfaceHandle failed, status %d, surface id 0x%x, frame data [%p, %p, %p %p]\n",
+               status, va_surface, frame->data[0], frame->data[1], frame->data[2], frame->data[3]);
         return;
     }
     if (hw_interop.prime.fourcc != VA_FOURCC_NV12 &&
