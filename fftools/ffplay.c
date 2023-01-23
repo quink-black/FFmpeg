@@ -2813,6 +2813,20 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
     set_default_window_size(vp->width, vp->height, vp->sar);
 
     av_frame_move_ref(vp->frame, src_frame);
+    if (vp->frame->format == AV_PIX_FMT_VAAPI) {
+        VASurfaceID surface = (uintptr_t) vp->frame->data[3];
+        VAStatus status;
+        VASurfaceStatus surface_status;
+
+        status = vaQuerySurfaceStatus(hw_interop.va_display, surface, &surface_status);
+        av_log(NULL, AV_LOG_VERBOSE, "Query surface status %s, surface in status %d\n",
+               vaErrorStr(status), surface_status);
+        status = vaSyncSurface(hw_interop.va_display, surface);
+        if (status != VA_STATUS_SUCCESS) {
+            av_log(NULL, AV_LOG_ERROR, "vaSyncSurface failed, %s, surface id 0x%x\n",
+                   vaErrorStr(status), surface);
+        }
+    }
     frame_queue_push(&is->pictq);
     return 0;
 }
