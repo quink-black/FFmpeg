@@ -1900,8 +1900,8 @@ static void video_gl_create_egl_img(AVFrame *frame)
                                    &hw_interop.prime);
     if (status != VA_STATUS_SUCCESS) {
         av_log(NULL, AV_LOG_ERROR,
-               "vaExportSurfaceHandle failed, status %d, surface id 0x%x, frame data [%p, %p, %p %p]\n",
-               status, va_surface, frame->data[0], frame->data[1], frame->data[2], frame->data[3]);
+               "vaExportSurfaceHandle failed, status %d/%s, surface id 0x%x, frame data [%p, %p, %p %p]\n",
+               status, vaErrorStr(status), va_surface, frame->data[0], frame->data[1], frame->data[2], frame->data[3]);
         return;
     }
     if (hw_interop.prime.fourcc != VA_FOURCC_NV12 &&
