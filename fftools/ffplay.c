@@ -1879,7 +1879,7 @@ static void video_gl_destroy_egl_img(void)
     }
 }
 
-static void video_gl_create_egl_img(AVFrame *frame)
+static int video_gl_create_egl_img(AVFrame *frame)
 {
     VASurfaceID va_surface;
     VAStatus status;
@@ -1893,7 +1893,7 @@ static void video_gl_create_egl_img(AVFrame *frame)
         av_log(NULL, AV_LOG_ERROR,
                "vaExportSurfaceHandle failed, status %d/%s, surface id 0x%x, frame data [%p, %p, %p %p]\n",
                status, vaErrorStr(status), va_surface, frame->data[0], frame->data[1], frame->data[2], frame->data[3]);
-        return;
+        return -1;
     }
     if (hw_interop.prime.fourcc != VA_FOURCC_NV12 &&
             hw_interop.prime.fourcc != VA_FOURCC_P010) {
@@ -1930,12 +1930,14 @@ static void video_gl_create_egl_img(AVFrame *frame)
         gl_context.tex_right = (float)frame->width / hw_interop.prime.width;
     if (hw_interop.prime.height > frame->height)
         gl_context.tex_bottom = (float)frame->height / hw_interop.prime.height;
+    return 0;
 }
 
 static void video_gl_draw(Frame *vp)
 {
     AVFrame *frame = vp->frame;
     GLint location;
+    int ret;
 
     if (!hw_interop.egl_ctx) {
         av_log(NULL, AV_LOG_ERROR, "%s, no OpenGL context\n", __func__);
@@ -1952,8 +1954,11 @@ static void video_gl_draw(Frame *vp)
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (frame->hw_frames_ctx)
-        video_gl_create_egl_img(frame);
+    if (frame->hw_frames_ctx && !vp->uploaded) {
+        ret = video_gl_create_egl_img(frame);
+        if (ret)
+            return;
+    }
 
     location = glGetUniformLocation(gl_context.program, "u_TexCoordScale");
     glUniform2f(location, gl_context.tex_right, gl_context.tex_bottom);
@@ -1961,15 +1966,17 @@ static void video_gl_draw(Frame *vp)
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, gl_context.tex[i]);
 
-        if (frame->hw_frames_ctx)
-            hw_interop.glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, hw_interop.egl_img[i]);
-        else
-            glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
-                     gl_context.tex_width[i], gl_context.tex_height[i],
-                     0,
-                     gl_context.tex_format[i],
-                     GL_UNSIGNED_BYTE,
-                     vp->frame->data[i]);
+        if (!vp->uploaded) {
+            if (frame->hw_frames_ctx)
+                hw_interop.glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, hw_interop.egl_img[i]);
+            else
+                glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
+                             gl_context.tex_width[i], gl_context.tex_height[i],
+                             0,
+                             gl_context.tex_format[i],
+                             GL_UNSIGNED_BYTE,
+                             vp->frame->data[i]);
+        }
     }
     // Draw the video rectangle
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1977,6 +1984,7 @@ static void video_gl_draw(Frame *vp)
     eglSwapBuffers(hw_interop.egl_display, hw_interop.egl_surface);
     if (frame->hw_frames_ctx)
         video_gl_destroy_egl_img();
+    vp->uploaded = 1;
 
     if (0) {
         static double last_time = 0.0;
