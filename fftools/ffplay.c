@@ -69,6 +69,9 @@
 #include "cmdutils.h"
 
 #include <assert.h>
+#include <fcntl.h>
+#include <xf86drm.h>
+#include <va/va_drm.h>
 
 // If SDL version >= 2.0.12, We can let SDL create the EGL context, otherwise create it by ourself
 #define CREATE_OUR_EGL_CONTEXT !SDL_VERSION_ATLEAST(2, 0, 12)
@@ -361,6 +364,7 @@ typedef struct HwInterop {
     Display *x11_display;
     Window x11_window;
     VADisplay va_display;
+    int drm_fd;
 
     EGLDisplay egl_display;
     EGLSurface egl_surface;
@@ -372,7 +376,16 @@ typedef struct HwInterop {
     EGLImage egl_img[2];
 } HwInterop;
 
-static HwInterop hw_interop;
+static HwInterop hw_interop = {
+        .drm_fd = -1,
+};
+
+enum VAAPI_MODE {
+    VAAPI_MODE_X11 = 0,
+    VAAPI_MODE_DRM = 1,
+};
+
+static enum VAAPI_MODE vaapi_mode = VAAPI_MODE_X11;
 
 static GlContext gl_context;
 
@@ -1722,27 +1735,82 @@ bailout:
     return ret;
 }
 
+static VADisplay video_get_vaapi_display(AVCodecContext *ctx)
+{
+    int ret;
+    int major, minor;
+
+    char path[128];
+    int max_devices = 4;
+    int drm_fd = -1;
+
+    VADisplay display;
+
+    if (vaapi_mode == VAAPI_MODE_X11) {
+        av_log(ctx, AV_LOG_INFO, "Using VAAPI x11 mode\n");
+        display = vaGetDisplay(hw_interop.x11_display);
+        if (!display)
+            return display;
+
+        ret = vaInitialize(hw_interop.va_display, &major, &minor);
+        if (ret != VA_STATUS_SUCCESS) {
+            av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI: %d (%s).\n",
+                   ret, vaErrorStr(ret));
+            return NULL;
+        }
+        av_log(ctx, AV_LOG_INFO, "Initialised VAAPI: version %d.%d\n",
+               major, minor);
+        return display;
+    }
+
+    av_log(ctx, AV_LOG_INFO, "Trying VAAPI DRM mode\n");
+    for (int i = 0; i < max_devices; i++) {
+        drmVersion *info;
+
+        snprintf(path, sizeof(path), "/dev/dri/renderD%d", 128 + i);
+        drm_fd = open(path, O_RDWR);
+        av_log(ctx, AV_LOG_INFO, "Open %s %s\n", path, drm_fd >= 0 ? "success" : "failed");
+        if (drm_fd < 0)
+            continue;
+
+        info = drmGetVersion(drm_fd);
+        if (info) {
+            av_log(ctx, AV_LOG_INFO, "Trying to use DRM render node with kernel driver (%s)\n",
+                   info->name);
+        }
+
+        display = vaGetDisplayDRM(drm_fd);
+        if (!display) {
+            close(drm_fd);
+            continue;
+        }
+
+        ret = vaInitialize(hw_interop.va_display, &major, &minor);
+        if (ret != VA_STATUS_SUCCESS) {
+            av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI: %d (%s).\n",
+                   ret, vaErrorStr(ret));
+            close(drm_fd);
+            continue;
+        }
+
+        hw_interop.drm_fd = drm_fd;
+        return display;
+    }
+
+    return NULL;
+}
+
 static int video_create_vaapi(AVCodecContext *ctx)
 {
     AVHWDeviceContext *device_ctx = NULL;
     AVVAAPIDeviceContext *va_ctx = NULL;
-    int major, minor;
     int ret;
 
-    hw_interop.va_display = vaGetDisplay(hw_interop.x11_display);
+    hw_interop.va_display = video_get_vaapi_display(ctx);
     if (!hw_interop.va_display) {
-        av_log(ctx, AV_LOG_ERROR, "Cannot open a VA display from X11 display\n");
-        return -1;
+        av_log(ctx, AV_LOG_ERROR, "Cannot open a VA display, fallback to software decoding\n");
+        return 0;
     }
-
-    ret = vaInitialize(hw_interop.va_display, &major, &minor);
-    if (ret != VA_STATUS_SUCCESS) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI connection: %d (%s).\n",
-               ret, vaErrorStr(ret));
-        return AVERROR(EIO);
-    }
-    av_log(ctx, AV_LOG_INFO, "Initialised VAAPI connection: "
-                             "version %d.%d\n", major, minor);
 
     ret = video_check_vaapi_profile(ctx);
     if (ret < 0) {
@@ -1802,7 +1870,8 @@ static int video_create_hw_interop(AVCodecContext *ctx)
 static void video_destroy_hwaccel(void)
 {
     av_buffer_unref(&hw_interop.device_ref);
-    vaTerminate(hw_interop.va_display);
+    if (hw_interop.va_display)
+        vaTerminate(hw_interop.va_display);
     hw_interop.va_display = NULL;
 }
 
@@ -4626,6 +4695,7 @@ static const OptionDef options[] = {
     { "find_stream_info", OPT_BOOL | OPT_INPUT | OPT_EXPERT, { &find_stream_info },
         "read and decode the streams to fill missing information with heuristics" },
     { "filter_threads", HAS_ARG | OPT_INT | OPT_EXPERT, { &filter_nbthreads }, "number of filter threads per graph" },
+    { "vaapi_mode", HAS_ARG | OPT_INT | OPT_EXPERT, { &vaapi_mode }, "VAAPI mode, 0 for X11, 1 for DRM" },
     { NULL, },
 };
 
