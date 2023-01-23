@@ -63,6 +63,7 @@
 #include <unistd.h>
 #include <va/va_x11.h>
 #include <va/va_drmcommon.h>
+#include <va/va_drm.h>
 #include "libavutil/hwcontext_vaapi.h"
 
 
@@ -70,8 +71,6 @@
 
 #include <assert.h>
 #include <fcntl.h>
-#include <xf86drm.h>
-#include <va/va_drm.h>
 
 // If SDL version >= 2.0.12, We can let SDL create the EGL context, otherwise create it by ourself
 #define CREATE_OUR_EGL_CONTEXT !SDL_VERSION_ATLEAST(2, 0, 12)
@@ -1752,7 +1751,7 @@ static VADisplay video_get_vaapi_display(AVCodecContext *ctx)
         if (!display)
             return display;
 
-        ret = vaInitialize(hw_interop.va_display, &major, &minor);
+        ret = vaInitialize(display, &major, &minor);
         if (ret != VA_STATUS_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI: %d (%s).\n",
                    ret, vaErrorStr(ret));
@@ -1765,19 +1764,11 @@ static VADisplay video_get_vaapi_display(AVCodecContext *ctx)
 
     av_log(ctx, AV_LOG_INFO, "Trying VAAPI DRM mode\n");
     for (int i = 0; i < max_devices; i++) {
-        drmVersion *info;
-
         snprintf(path, sizeof(path), "/dev/dri/renderD%d", 128 + i);
         drm_fd = open(path, O_RDWR);
         av_log(ctx, AV_LOG_INFO, "Open %s %s\n", path, drm_fd >= 0 ? "success" : "failed");
         if (drm_fd < 0)
             continue;
-
-        info = drmGetVersion(drm_fd);
-        if (info) {
-            av_log(ctx, AV_LOG_INFO, "Trying to use DRM render node with kernel driver (%s)\n",
-                   info->name);
-        }
 
         display = vaGetDisplayDRM(drm_fd);
         if (!display) {
@@ -1785,7 +1776,7 @@ static VADisplay video_get_vaapi_display(AVCodecContext *ctx)
             continue;
         }
 
-        ret = vaInitialize(hw_interop.va_display, &major, &minor);
+        ret = vaInitialize(display, &major, &minor);
         if (ret != VA_STATUS_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI: %d (%s).\n",
                    ret, vaErrorStr(ret));
