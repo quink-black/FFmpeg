@@ -1869,13 +1869,15 @@ static void video_destroy_hwaccel(void)
 static void video_gl_destroy_egl_img(void)
 {
     for (int i = 0; i < gl_context.tex_count; i++) {
+        uint32_t obj_idx;
         if (!hw_interop.egl_img[i])
             break;
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, 0);
         hw_interop.eglDestroyImageKHR(hw_interop.egl_display, hw_interop.egl_img[i]);
         hw_interop.egl_img[i] = NULL;
-        close(hw_interop.prime.objects[i].fd);
+        obj_idx = hw_interop.prime.layers[i].object_index[0];
+        close(hw_interop.prime.objects[obj_idx].fd);
     }
 }
 
