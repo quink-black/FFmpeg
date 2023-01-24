@@ -1948,8 +1948,11 @@ static void video_gl_draw(Frame *vp)
     glUseProgram(gl_context.program);
 
     if (screen_width && screen_height &&
-        (screen_width != gl_context.window_width || screen_height != gl_context.window_height))
+        (screen_width != gl_context.window_width || screen_height != gl_context.window_height)) {
+        gl_context.window_width = screen_width;
+        gl_context.window_height = screen_height;
         glViewport(0, 0, screen_width, screen_height);
+    }
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
