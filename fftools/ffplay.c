@@ -1885,8 +1885,12 @@ static int video_gl_create_egl_img(AVFrame *frame)
 {
     VASurfaceID va_surface;
     VAStatus status;
+    VASurfaceStatus surface_status;
 
     va_surface = (VASurfaceID) (uintptr_t) frame->data[3];
+    status = vaQuerySurfaceStatus(hw_interop.va_display, va_surface, &surface_status);
+    av_log(NULL, AV_LOG_VERBOSE, "Query surface status %s, surface in status %d\n",
+           vaErrorStr(status), surface_status);
     status = vaExportSurfaceHandle(hw_interop.va_display, va_surface,
                                    VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
                                    VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
@@ -2818,6 +2822,7 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
     set_default_window_size(vp->width, vp->height, vp->sar);
 
     av_frame_move_ref(vp->frame, src_frame);
+#if 0
     if (vp->frame->format == AV_PIX_FMT_VAAPI) {
         VASurfaceID surface = (uintptr_t) vp->frame->data[3];
         VAStatus status;
@@ -2832,6 +2837,7 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
                    vaErrorStr(status), surface);
         }
     }
+#endif
     frame_queue_push(&is->pictq);
     return 0;
 }
