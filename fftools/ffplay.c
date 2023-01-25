@@ -2079,6 +2079,8 @@ static void video_image_display(VideoState *is)
 
         set_sdl_yuv_conversion_mode(vp->frame);
         SDL_RenderCopyEx(renderer, is->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
+    } else {
+        video_gl_draw(vp);
     }
 
     set_sdl_yuv_conversion_mode(NULL);
@@ -2099,8 +2101,6 @@ static void video_image_display(VideoState *is)
         }
 #endif
     }
-    if (gl_context.ctx)
-        video_gl_draw(vp);
 }
 
 static inline int compute_mod(int a, int b)
