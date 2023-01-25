@@ -1891,6 +1891,10 @@ static int video_gl_create_egl_img(AVFrame *frame)
     status = vaQuerySurfaceStatus(hw_interop.va_display, va_surface, &surface_status);
     av_log(NULL, AV_LOG_VERBOSE, "Query surface status %s, surface in status %d\n",
            vaErrorStr(status), surface_status);
+    memset(&hw_interop.prime, 0, sizeof(hw_interop.prime));
+    for (int i = 0; i < FF_ARRAY_ELEMS(hw_interop.prime.objects); i++) {
+        hw_interop.prime.objects[i].fd = -1;
+    }
     status = vaExportSurfaceHandle(hw_interop.va_display, va_surface,
                                    VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
                                    VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
