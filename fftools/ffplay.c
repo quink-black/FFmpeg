@@ -1519,7 +1519,7 @@ static void vaapi_device_log_info(void *context, const char *message)
 {
     AVHWDeviceContext *ctx = context;
 
-    av_log(ctx, AV_LOG_INFO, "libva: %s", message);
+    av_log(ctx, AV_LOG_VERBOSE, "libva: %s", message);
 }
 
 static int video_egl_init(void)
