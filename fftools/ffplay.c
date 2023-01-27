@@ -1327,7 +1327,7 @@ static int video_gl_setup_format(AVFrame *frame)
         gl_context.tex_right = 1.0f;
     gl_context.tex_bottom = 1.0f;
 
-    av_log(NULL, AV_LOG_INFO, "%s with %s success\n", __func__,
+    av_log(NULL, AV_LOG_VERBOSE, "%s with %s success\n", __func__,
            av_get_pix_fmt_name(frame->format));
     return 0;
 }
@@ -1454,7 +1454,7 @@ static void video_gl_dump_version(void)
     renderer = glGetString(GL_RENDERER);
     version = glGetString(GL_VERSION);
     shader_version = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    av_log(NULL, AV_LOG_INFO, "OpenGL vendor [%s], renderer [%s], version [%s], "
+    av_log(NULL, AV_LOG_VERBOSE, "OpenGL vendor [%s], renderer [%s], version [%s], "
                               "shader language version [%s]\n",
            vendor, renderer, version, shader_version);
     video_gl_check_error(__func__, __LINE__);
@@ -1510,16 +1510,12 @@ static void video_gl_destroy(void)
 
 static void vaapi_device_log_error(void *context, const char *message)
 {
-    AVHWDeviceContext *ctx = context;
-
-    av_log(ctx, AV_LOG_ERROR, "libva: %s", message);
+    av_log(context, AV_LOG_ERROR, "vaapi error: %s", message);
 }
 
 static void vaapi_device_log_info(void *context, const char *message)
 {
-    AVHWDeviceContext *ctx = context;
-
-    av_log(ctx, AV_LOG_VERBOSE, "libva: %s", message);
+    av_log(context, AV_LOG_VERBOSE, "vaapi info: %s", message);
 }
 
 static int video_egl_init(void)
@@ -1600,7 +1596,7 @@ static int video_egl_init(void)
                hw_interop.egl_display, hw_interop.egl_surface);
         return -1;
     }
-    av_log(NULL, AV_LOG_INFO, "EGL vendor %s, version %s\n",
+    av_log(NULL, AV_LOG_VERBOSE, "EGL vendor %s, version %s\n",
            eglQueryString(hw_interop.egl_display, EGL_VENDOR),
            eglQueryString(hw_interop.egl_display, EGL_VERSION));
     av_log(NULL, AV_LOG_VERBOSE, "EGL extension %s\n",
@@ -1681,7 +1677,7 @@ static int video_check_vaapi_for_codec(AVCodecContext *ctx)
             return 0;
     }
 
-    av_log(ctx, AV_LOG_INFO, "Skip hwaccel for codec %s\n",
+    av_log(ctx, AV_LOG_VERBOSE, "Skip hwaccel for codec %s\n",
            avcodec_get_name(ctx->codec_id));
     return -1;
 }
@@ -1746,27 +1742,29 @@ static VADisplay video_get_vaapi_display(AVCodecContext *ctx)
     VADisplay display;
 
     if (vaapi_mode == VAAPI_MODE_X11) {
-        av_log(ctx, AV_LOG_INFO, "Using VAAPI x11 mode\n");
+        av_log(ctx, AV_LOG_VERBOSE, "Using VAAPI x11 mode\n");
         display = vaGetDisplay(hw_interop.x11_display);
         if (!display)
             return display;
 
+        vaSetErrorCallback(display, &vaapi_device_log_error, NULL);
+        vaSetInfoCallback(display, &vaapi_device_log_info, NULL);
         ret = vaInitialize(display, &major, &minor);
         if (ret != VA_STATUS_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI: %d (%s).\n",
                    ret, vaErrorStr(ret));
             return NULL;
         }
-        av_log(ctx, AV_LOG_INFO, "Initialised VAAPI: version %d.%d\n",
+        av_log(ctx, AV_LOG_VERBOSE, "Initialised VAAPI: version %d.%d\n",
                major, minor);
         return display;
     }
 
-    av_log(ctx, AV_LOG_INFO, "Trying VAAPI DRM mode\n");
+    av_log(ctx, AV_LOG_VERBOSE, "Trying VAAPI DRM mode\n");
     for (int i = 0; i < max_devices; i++) {
         snprintf(path, sizeof(path), "/dev/dri/renderD%d", 128 + i);
         drm_fd = open(path, O_RDWR);
-        av_log(ctx, AV_LOG_INFO, "Open %s %s\n", path, drm_fd >= 0 ? "success" : "failed");
+        av_log(ctx, AV_LOG_VERBOSE, "Open %s %s\n", path, drm_fd >= 0 ? "success" : "failed");
         if (drm_fd < 0)
             continue;
 
@@ -1776,6 +1774,8 @@ static VADisplay video_get_vaapi_display(AVCodecContext *ctx)
             continue;
         }
 
+        vaSetErrorCallback(display, &vaapi_device_log_error, NULL);
+        vaSetInfoCallback(display, &vaapi_device_log_info, NULL);
         ret = vaInitialize(display, &major, &minor);
         if (ret != VA_STATUS_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "Failed to initialise VAAPI: %d (%s).\n",
@@ -1811,9 +1811,6 @@ static int video_create_vaapi(AVCodecContext *ctx)
         return 0;
     }
 
-    vaSetErrorCallback(hw_interop.va_display, &vaapi_device_log_error, ctx);
-    vaSetInfoCallback(hw_interop.va_display, &vaapi_device_log_info, ctx);
-
     hw_interop.type = AV_HWDEVICE_TYPE_VAAPI;
     hw_interop.device_ref = av_hwdevice_ctx_alloc(hw_interop.type);
     if (!hw_interop.device_ref) {
@@ -1833,7 +1830,7 @@ static int video_create_vaapi(AVCodecContext *ctx)
     hw_interop.name = av_hwdevice_get_type_name(hw_interop.type);
     ctx->hw_device_ctx = av_buffer_ref(hw_interop.device_ref);
     ctx->get_format = get_hw_format;
-    av_log(ctx, AV_LOG_INFO, "Create hwaccel %s success\n", hw_interop.name);
+    av_log(ctx, AV_LOG_VERBOSE, "Create hwaccel %s success\n", hw_interop.name);
     return 0;
 }
 
@@ -2417,7 +2414,7 @@ static int video_open(VideoState *is)
         av_log(NULL, AV_LOG_WARNING, "OpenGL init failed, use normal render\n");
         video_gl_destroy();
     } else {
-        av_log(NULL, AV_LOG_INFO, "OpenGL init success\n");
+        av_log(NULL, AV_LOG_VERBOSE, "OpenGL init success\n");
     }
 
     return 0;
