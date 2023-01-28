@@ -2916,6 +2916,11 @@ static int configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
         FFSWAP(AVFilterContext*, graph->filters[i], graph->filters[i + nb_filters]);
 
     ret = avfilter_graph_config(graph, NULL);
+    if (!ret) {
+        char *str = avfilter_graph_dump(graph, NULL);
+        av_log(graph, AV_LOG_DEBUG, "filter graph:\n%s\n", str);
+        av_free(str);
+    }
 fail:
     avfilter_inout_free(&outputs);
     avfilter_inout_free(&inputs);
@@ -2928,7 +2933,7 @@ static int configure_video_filters(AVFilterGraph *graph, VideoState *is, const c
     char sws_flags_str[512] = "";
     char buffersrc_args[256];
     int ret;
-    AVFilterContext *filt_src = NULL, *filt_out = NULL, *last_filter = NULL;
+    AVFilterContext *filt_src = NULL, *sw_filt_src = NULL, *filt_out = NULL, *last_filter = NULL;
     AVCodecParameters *codecpar = is->video_st->codecpar;
     AVRational fr = av_guess_frame_rate(is->ic, is->video_st, NULL);
     AVDictionaryEntry *e = NULL;
@@ -2969,6 +2974,29 @@ static int configure_video_filters(AVFilterGraph *graph, VideoState *is, const c
                                             "ffplay_buffer", buffersrc_args, NULL,
                                             graph)) < 0)
         goto fail;
+
+    if (frame->hw_frames_ctx) {
+        AVBufferSrcParameters *par = av_buffersrc_parameters_alloc();
+        AVFilterContext *filt_ctx = NULL;
+
+        par->hw_frames_ctx = av_buffer_ref(frame->hw_frames_ctx);
+        av_buffersrc_parameters_set(filt_src, par);
+        av_freep(&par);
+        ret = avfilter_graph_create_filter(&filt_ctx,
+                                           avfilter_get_by_name("hwdownload"),
+                                           "ffplay_hwdownload", NULL, NULL, graph);
+        if (ret < 0)
+            goto fail;
+
+        ret = avfilter_link(filt_src, 0, filt_ctx, 0);
+        if (ret < 0)
+            goto fail;
+        sw_filt_src = filt_ctx;
+        pix_fmts[0] = AV_PIX_FMT_NV12;
+        pix_fmts[1] = AV_PIX_FMT_NONE;
+    } else {
+        sw_filt_src = filt_src;
+    }
 
     ret = avfilter_graph_create_filter(&filt_out,
                                        avfilter_get_by_name("buffersink"),
@@ -3016,7 +3044,7 @@ static int configure_video_filters(AVFilterGraph *graph, VideoState *is, const c
         }
     }
 
-    if ((ret = configure_filtergraph(graph, vfilters, filt_src, last_filter)) < 0)
+    if ((ret = configure_filtergraph(graph, vfilters, sw_filt_src, last_filter)) < 0)
         goto fail;
 
     is->in_video_filter  = filt_src;
@@ -3211,6 +3239,7 @@ static int video_thread(void *arg)
     int ret;
     AVRational tb = is->video_st->time_base;
     AVRational frame_rate = av_guess_frame_rate(is->ic, is->video_st, NULL);
+    double theta  = get_rotation(is->video_st);
 
 #if CONFIG_AVFILTER
     AVFilterGraph *graph = NULL;
@@ -3232,7 +3261,10 @@ static int video_thread(void *arg)
         if (!ret)
             continue;
 
-        if (frame->hw_frames_ctx) {
+        // Hardware decoding is enabled.
+        // No user specified video filter
+        // Autorotate is disabled or don't need rotate
+        if (frame->hw_frames_ctx && !vfilters_list && (!autorotate || fabs(theta) < 1.0)) {
             duration = (frame_rate.num && frame_rate.den ? av_q2d((AVRational) {frame_rate.den, frame_rate.num}) : 0);
             pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
             ret = queue_picture(is, frame, pts, duration, frame->pkt_pos, is->viddec.pkt_serial);
