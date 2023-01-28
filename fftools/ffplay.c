@@ -1383,16 +1383,30 @@ static int video_gl_build_shader(void)
     return video_gl_check_error(__func__, __LINE__);
 }
 
-static int video_gl_setup_vertex(AVFrame *frame)
+static int video_gl_setup_vertex(AVFrame *frame, VideoState *is)
 {
     GLint pos_attrib = glGetAttribLocation(gl_context.program, "a_position");
     GLint uv_attrib = glGetAttribLocation(gl_context.program, "a_uv");
+    double theta  = -get_rotation(is->video_st);
     // vertex X, vertex Y, UV X, UV Y
     GLfloat vertices[] = {
             -1.0f, 1.0f, 0.f, 0.f,
             -1.0f, -1.0f, 0.f, 1.f,
             1.0f, 1.0f, 1.0f, 0.f,
             1.0f, -1.0f, 1.0f, 1.f};
+
+    if (autorotate && frame->hw_frames_ctx && fabs(theta) > 1.0) {
+        GLfloat rotate_matrix[4] = {
+            cos(theta * M_PI / 180), -sin(theta * M_PI / 180), sin(theta * M_PI / 180), cos(theta * M_PI / 180),
+        };
+        GLfloat origin[FF_ARRAY_ELEMS(vertices)] = {};
+
+        memcpy(origin, vertices, sizeof(vertices));
+        for (int i = 0; i < 4; i++) {
+            vertices[i * 4] = rotate_matrix[0] * origin[i * 4] + rotate_matrix[1] * origin[i * 4 + 1];
+            vertices[i * 4 + 1] = rotate_matrix[2] * origin[i * 4] + rotate_matrix[3] * origin[i * 4 + 1];
+        }
+    }
 
     // Create Vertex Array Object
     glGenVertexArrays(1, &gl_context.vao);
@@ -1494,7 +1508,7 @@ static int video_gl_init(VideoState *is)
     ret = video_gl_build_shader();
     if (ret)
         return ret;
-    ret = video_gl_setup_vertex(vp->frame);
+    ret = video_gl_setup_vertex(vp->frame, is);
     if (ret)
         return ret;
     ret = video_gl_setup_texture(vp->frame);
@@ -2801,6 +2815,7 @@ display:
 static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double duration, int64_t pos, int serial)
 {
     Frame *vp;
+    double theta  = get_rotation(is->video_st);
 
 #if defined(DEBUG_SYNC)
     printf("frame_type=%c pts=%0.3f\n",
@@ -2822,7 +2837,10 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
     vp->pos = pos;
     vp->serial = serial;
 
-    set_default_window_size(vp->width, vp->height, vp->sar);
+    if (autorotate && src_frame->hw_frames_ctx && ((fabs(theta - 90) < 1.0) || (fabs(theta - 270) < 1.0)))
+        set_default_window_size(vp->height, vp->width, vp->sar);
+    else
+        set_default_window_size(vp->width, vp->height, vp->sar);
 
     av_frame_move_ref(vp->frame, src_frame);
 #if 0
@@ -3239,7 +3257,6 @@ static int video_thread(void *arg)
     int ret;
     AVRational tb = is->video_st->time_base;
     AVRational frame_rate = av_guess_frame_rate(is->ic, is->video_st, NULL);
-    double theta  = get_rotation(is->video_st);
 
 #if CONFIG_AVFILTER
     AVFilterGraph *graph = NULL;
@@ -3263,8 +3280,7 @@ static int video_thread(void *arg)
 
         // Hardware decoding is enabled.
         // No user specified video filter
-        // Autorotate is disabled or don't need rotate
-        if (frame->hw_frames_ctx && !vfilters_list && (!autorotate || fabs(theta) < 1.0)) {
+        if (frame->hw_frames_ctx && !vfilters_list) {
             duration = (frame_rate.num && frame_rate.den ? av_q2d((AVRational) {frame_rate.den, frame_rate.num}) : 0);
             pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
             ret = queue_picture(is, frame, pts, duration, frame->pkt_pos, is->viddec.pkt_serial);
