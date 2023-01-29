@@ -1250,9 +1250,6 @@ static int video_gl_setup_format(AVFrame *frame)
 {
     enum AVPixelFormat format = frame->format;
 
-    if (frame->linesize[0] < 0)
-        return -1;
-
     if (format == AV_PIX_FMT_VAAPI) {
         AVHWFramesContext *hwframes_ctx = (AVHWFramesContext *) frame->hw_frames_ctx->data;
         if (hwframes_ctx->sw_format == AV_PIX_FMT_NV12 ||
@@ -1273,7 +1270,7 @@ static int video_gl_setup_format(AVFrame *frame)
         for (int i = 0; i < 3; i++) {
             gl_context.tex_format[i] = GL_RED;
             gl_context.tex_internal_format[i] = GL_RED;
-            gl_context.tex_width[i] = frame->linesize[i];
+            gl_context.tex_width[i] = abs(frame->linesize[i]);
             gl_context.tex_height[i] = frame->height;
             if (i > 0)
                 gl_context.tex_height[i] /= 2;
@@ -1287,8 +1284,8 @@ static int video_gl_setup_format(AVFrame *frame)
         gl_context.tex_internal_format[0] = GL_RED;
         gl_context.tex_format[1] = GL_RG;
         gl_context.tex_internal_format[1] = GL_RG;
-        gl_context.tex_width[0] = frame->linesize[0];
-        gl_context.tex_width[1] = frame->linesize[1] / 2;
+        gl_context.tex_width[0] = abs(frame->linesize[0]);
+        gl_context.tex_width[1] = abs(frame->linesize[1] / 2);
         gl_context.tex_height[0] = frame->height;
         gl_context.tex_height[1] = frame->height / 2;
     } else if (format == AV_PIX_FMT_P010LE || format == AV_PIX_FMT_P016LE) {
@@ -1300,8 +1297,8 @@ static int video_gl_setup_format(AVFrame *frame)
         gl_context.tex_internal_format[0] = GL_R16;
         gl_context.tex_format[1] = GL_RG;
         gl_context.tex_internal_format[1] = GL_RG16;
-        gl_context.tex_width[0] = frame->linesize[0] / 2;
-        gl_context.tex_width[1] = frame->linesize[1] / 4;
+        gl_context.tex_width[0] = abs(frame->linesize[0] / 2);
+        gl_context.tex_width[1] = abs(frame->linesize[1] / 4);
         gl_context.tex_height[0] = frame->height / 2;
         gl_context.tex_height[1] = frame->height / 4;
 
@@ -1312,7 +1309,7 @@ static int video_gl_setup_format(AVFrame *frame)
             gl_context.tex_right = (float)(frame->width * 4) / frame->linesize[0];
         gl_context.tex_format[0] = GL_RGBA;
         gl_context.tex_internal_format[0] = GL_RGBA;
-        gl_context.tex_width[0] = frame->linesize[0] / 4;
+        gl_context.tex_width[0] = abs(frame->linesize[0] / 4);
         gl_context.tex_height[0] = frame->height;
     } else if (format == AV_PIX_FMT_RGB24) {
         gl_context.shader_source = rgb_shader;
@@ -1321,7 +1318,7 @@ static int video_gl_setup_format(AVFrame *frame)
             gl_context.tex_right = (float)(frame->width * 3) / frame->linesize[0];
         gl_context.tex_format[0] = GL_RGB;
         gl_context.tex_internal_format[0] = GL_RGBA;
-        gl_context.tex_width[0] = frame->linesize[0] / 3;
+        gl_context.tex_width[0] = abs(frame->linesize[0] / 3);
         gl_context.tex_height[0] = frame->height;
     } else {
         // TODO
@@ -1413,6 +1410,10 @@ static int video_gl_setup_vertex(AVFrame *frame, VideoState *is)
             vertices[i * 4] = rotate_matrix[0] * origin[i * 4] + rotate_matrix[1] * origin[i * 4 + 1];
             vertices[i * 4 + 1] = rotate_matrix[2] * origin[i * 4] + rotate_matrix[3] * origin[i * 4 + 1];
         }
+    }
+    if (frame->linesize[0] < 0) {
+        for (int i = 0; i < 4; i++)
+            vertices[i * 4 + 3] = 1.0f - vertices[i * 4 + 3];
     }
 
     // Create Vertex Array Object
@@ -2005,13 +2006,23 @@ static void video_gl_draw(Frame *vp)
         if (!vp->uploaded) {
             if (frame->hw_frames_ctx)
                 hw_interop.glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, hw_interop.egl_img[i]);
-            else
-                glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
-                             gl_context.tex_width[i], gl_context.tex_height[i],
-                             0,
-                             gl_context.tex_format[i],
-                             GL_UNSIGNED_BYTE,
-                             vp->frame->data[i]);
+            else {
+                if (vp->frame->linesize[0] > 0) {
+                    glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
+                                 gl_context.tex_width[i], gl_context.tex_height[i],
+                                 0,
+                                 gl_context.tex_format[i],
+                                 GL_UNSIGNED_BYTE,
+                                 vp->frame->data[i]);
+                } else {
+                    glTexImage2D(GL_TEXTURE_2D, 0, gl_context.tex_internal_format[i],
+                                 gl_context.tex_width[i], gl_context.tex_height[i],
+                                 0,
+                                 gl_context.tex_format[i],
+                                 GL_UNSIGNED_BYTE,
+                                 vp->frame->data[i] + frame->linesize[i] * (gl_context.tex_height[i] - 1));
+                }
+            }
         }
     }
     // Draw the video rectangle
