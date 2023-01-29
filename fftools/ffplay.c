@@ -385,6 +385,10 @@ enum VAAPI_MODE {
 };
 
 static enum VAAPI_MODE vaapi_mode = VAAPI_MODE_X11;
+/* Only use vaapi without "-vf" by default.
+ * If vaapi_copy = 1, enable vaapi decoding and then download to CPU to do filter
+ */
+static int vaapi_copy = 0;
 
 static GlContext gl_context;
 
@@ -1246,6 +1250,9 @@ static int video_gl_setup_format(AVFrame *frame)
 {
     enum AVPixelFormat format = frame->format;
 
+    if (frame->linesize[0] < 0)
+        return -1;
+
     if (format == AV_PIX_FMT_VAAPI) {
         AVHWFramesContext *hwframes_ctx = (AVHWFramesContext *) frame->hw_frames_ctx->data;
         if (hwframes_ctx->sw_format == AV_PIX_FMT_NV12 ||
@@ -1852,6 +1859,9 @@ static int video_create_hw_interop(AVCodecContext *ctx)
 {
     int ret;
 
+    if (vfilters_list && !vaapi_copy)
+        return 0;
+
     if (video_check_vaapi_for_codec(ctx) < 0) {
         // Skip vaapi hardware decoding
         return 0;
@@ -2425,7 +2435,7 @@ static int video_open(VideoState *is)
 
     ret = video_gl_init(is);
     if (ret) {
-        av_log(NULL, AV_LOG_WARNING, "OpenGL init failed, use normal render\n");
+        av_log(NULL, AV_LOG_VERBOSE, "OpenGL init failed, use normal render\n");
         video_gl_destroy();
     } else {
         av_log(NULL, AV_LOG_VERBOSE, "OpenGL init success\n");
@@ -4780,6 +4790,7 @@ static const OptionDef options[] = {
         "read and decode the streams to fill missing information with heuristics" },
     { "filter_threads", HAS_ARG | OPT_INT | OPT_EXPERT, { &filter_nbthreads }, "number of filter threads per graph" },
     { "vaapi_mode", HAS_ARG | OPT_INT | OPT_EXPERT, { &vaapi_mode }, "VAAPI mode, 0 for X11, 1 for DRM" },
+    { "vaapi_copy", HAS_ARG | OPT_INT | OPT_EXPERT, { &vaapi_copy }, "Use VAAPI decoding with CPU filter (-vf)" },
     { NULL, },
 };
 
