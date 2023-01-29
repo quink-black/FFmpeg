@@ -3010,8 +3010,17 @@ static int configure_video_filters(AVFilterGraph *graph, VideoState *is, const c
         if (ret < 0)
             goto fail;
         sw_filt_src = filt_ctx;
-        pix_fmts[0] = AV_PIX_FMT_NV12;
-        pix_fmts[1] = AV_PIX_FMT_NONE;
+
+        ret = avfilter_graph_create_filter(&filt_ctx,
+                                           avfilter_get_by_name("format"),
+                                           "ffplay_format", "pix_fmts=yuv420p|nv12", NULL, graph);
+        if (ret < 0)
+            goto fail;
+
+        ret = avfilter_link(sw_filt_src, 0, filt_ctx, 0);
+        if (ret < 0)
+            goto fail;
+        sw_filt_src = filt_ctx;
     } else {
         sw_filt_src = filt_src;
     }
