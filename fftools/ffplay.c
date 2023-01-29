@@ -4790,7 +4790,7 @@ static const OptionDef options[] = {
         "read and decode the streams to fill missing information with heuristics" },
     { "filter_threads", HAS_ARG | OPT_INT | OPT_EXPERT, { &filter_nbthreads }, "number of filter threads per graph" },
     { "vaapi_mode", HAS_ARG | OPT_INT | OPT_EXPERT, { &vaapi_mode }, "VAAPI mode, 0 for X11, 1 for DRM" },
-    { "vaapi_copy", HAS_ARG | OPT_INT | OPT_EXPERT, { &vaapi_copy }, "Use VAAPI decoding with CPU filter (-vf)" },
+    { "vaapi_copy", OPT_BOOL | OPT_INT | OPT_EXPERT, { &vaapi_copy }, "Use VAAPI decoding with CPU filter (-vf)" },
     { NULL, },
 };
 
