@@ -1302,7 +1302,7 @@ static int video_gl_setup_format(AVFrame *frame)
         gl_context.tex_height[0] = frame->height / 2;
         gl_context.tex_height[1] = frame->height / 4;
 
-    } else if (format == AV_PIX_FMT_RGBA) {
+    } else if (format == AV_PIX_FMT_RGBA || format == AV_PIX_FMT_RGB0) {
         gl_context.shader_source = rgb_shader;
         gl_context.tex_count = 1;
         if (frame->linesize[0] > 0)
