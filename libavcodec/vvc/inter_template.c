@@ -541,11 +541,13 @@ static void FUNC(dmvr_v)(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src
 static void FUNC(dmvr_hv)(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
     const int height, const intptr_t mx, const intptr_t my, const int width)
 {
-    int16_t tmp_array[(MAX_PB_SIZE + BILINEAR_EXTRA) * MAX_PB_SIZE];
-    int16_t *tmp                = tmp_array;
+    int16_t tmp_array[MAX_PB_SIZE * 2];
+    int16_t *tmp0               = tmp_array;
+    int16_t *tmp1               = tmp_array + MAX_PB_SIZE;
     const pixel *src            = (const pixel*)_src;
     const ptrdiff_t src_stride  = _src_stride / sizeof(pixel);
-    const int8_t *filter        = ff_vvc_inter_luma_dmvr_filters[mx];
+    const int8_t *filter_x      = ff_vvc_inter_luma_dmvr_filters[mx];
+    const int8_t *filter_y      = ff_vvc_inter_luma_dmvr_filters[my];
     const int shift1            = BIT_DEPTH - 6;
     const int offset1           = 1 << (shift1 - 1);
     const int shift2            = 4;
@@ -553,19 +555,15 @@ static void FUNC(dmvr_hv)(int16_t *dst, const uint8_t *_src, const ptrdiff_t _sr
 
     src   -= BILINEAR_EXTRA_BEFORE * src_stride;
     for (int y = 0; y < height + BILINEAR_EXTRA; y++) {
-        for (int x = 0; x < width; x++)
-            tmp[x] = (DMVR_FILTER(src, 1) + offset1) >> shift1;
+        for (int x = 0; x < width; x++) {
+            tmp1[x] = ((filter_x[0] * src[x] + filter_x[1] * src[x + 1]) + offset1) >> shift1;
+            if (y > 0)
+                dst[x] = ((filter_y[0] * tmp0[x] + filter_y[1] * tmp1[x]) + offset2) >> shift2;
+        }
         src += src_stride;
-        tmp += MAX_PB_SIZE;
-    }
-
-    tmp    = tmp_array + BILINEAR_EXTRA_BEFORE * MAX_PB_SIZE;
-    filter = ff_vvc_inter_luma_dmvr_filters[my];
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++)
-            dst[x] = (DMVR_FILTER(tmp, MAX_PB_SIZE) + offset2) >> shift2;
-        tmp += MAX_PB_SIZE;
-        dst += MAX_PB_SIZE;
+        if (y > 0)
+            dst += MAX_PB_SIZE;
+        FFSWAP(int16_t *, tmp0, tmp1);
     }
 }
 
