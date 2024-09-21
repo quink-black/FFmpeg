@@ -88,6 +88,8 @@ W_AVG_FUN(12)
         const uint8_t *_src, const ptrdiff_t _src_stride, const int height, \
         const intptr_t mx, const intptr_t my, const int width);
 
+DMVR_FUN(, 8)
+DMVR_FUN(, 12)
 DMVR_FUN(hv_, 8)
 DMVR_FUN(hv_, 10)
 DMVR_FUN(hv_, 12)
@@ -164,6 +166,7 @@ void ff_vvc_dsp_init_aarch64(VVCDSPContext *const c, const int bd)
 
         c->inter.avg = ff_vvc_avg_8_neon;
         c->inter.w_avg = vvc_w_avg_8;
+        c->inter.dmvr[0][0] = ff_vvc_dmvr_8_neon;
         c->inter.dmvr[1][1] = ff_vvc_dmvr_hv_8_neon;
 
         for (int i = 0; i < FF_ARRAY_ELEMS(c->sao.band_filter); i++)
@@ -213,6 +216,7 @@ void ff_vvc_dsp_init_aarch64(VVCDSPContext *const c, const int bd)
     } else if (bd == 12) {
         c->inter.avg = ff_vvc_avg_12_neon;
         c->inter.w_avg = vvc_w_avg_12;
+        c->inter.dmvr[0][0] = ff_vvc_dmvr_12_neon;
         c->inter.dmvr[1][1] = ff_vvc_dmvr_hv_12_neon;
 
         c->alf.filter[LUMA] = alf_filter_luma_12_neon;
