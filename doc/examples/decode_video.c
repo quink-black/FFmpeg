@@ -32,9 +32,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <libavutil/time.h>
 #include <libavcodec/avcodec.h>
 
 #define INBUF_SIZE 4096
+
+static int64_t start;
+static int64_t last;
+static int64_t frame_count = 0;
+
+static void update_benchmark(void)
+{
+    frame_count++;
+    if (frame_count % 30 == 0) {
+        int64_t now = av_gettime_relative();
+        int64_t dura = now - last;
+        float fps = 30 * 1000000.0 / dura;
+        last = now;
+        printf("current fps %f\n", fps);
+    }
+}
 
 static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
                      char *filename)
@@ -42,6 +59,8 @@ static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
     FILE *f;
     int i;
 
+    update_benchmark();
+    return;
     f = fopen(filename,"wb");
     fprintf(f, "P5\n%d %d\n%d\n", xsize, ysize, 255);
     for (i = 0; i < ysize; i++)
@@ -70,8 +89,8 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt,
             exit(1);
         }
 
-        printf("saving frame %3"PRId64"\n", dec_ctx->frame_num);
-        fflush(stdout);
+        // printf("saving frame %3"PRId64"\n", dec_ctx->frame_num);
+        // fflush(stdout);
 
         /* the picture is allocated by the decoder. no need to
            free it */
@@ -95,6 +114,7 @@ int main(int argc, char **argv)
     int ret;
     int eof;
     AVPacket *pkt;
+    AVDictionary *dict = NULL;
 
     if (argc <= 2) {
         fprintf(stderr, "Usage: %s <input file> <output file>\n"
@@ -112,7 +132,7 @@ int main(int argc, char **argv)
     memset(inbuf + INBUF_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
     /* find the MPEG-1 video decoder */
-    codec = avcodec_find_decoder(AV_CODEC_ID_MPEG1VIDEO);
+    codec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
     if (!codec) {
         fprintf(stderr, "Codec not found\n");
         exit(1);
@@ -135,7 +155,9 @@ int main(int argc, char **argv)
        available in the bitstream. */
 
     /* open it */
-    if (avcodec_open2(c, codec, NULL) < 0) {
+    ret = avcodec_open2(c, codec, &dict);
+    av_dict_free(&dict);
+    if (ret < 0) {
         fprintf(stderr, "Could not open codec\n");
         exit(1);
     }
@@ -152,6 +174,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+    start = last = av_gettime_relative();
     do {
         /* read raw data from the input file */
         data_size = fread(inbuf, 1, INBUF_SIZE, f);
@@ -180,6 +203,13 @@ int main(int argc, char **argv)
 
     /* flush the decoder */
     decode(c, frame, NULL, outfilename);
+
+    {
+        int64_t now = av_gettime_relative();
+        int64_t dura = now - start;
+        float fps = frame_count * 1000000.0 / dura;
+        printf("avg fps %f\n", fps);
+    }
 
     fclose(f);
 
