@@ -266,10 +266,10 @@ function ff_hevc_idct_4x4_\bitdepth\()_neon, export=1
         ld1             {v4.4h}, [x1]
 
         tr_4x4          v0.4h, v1.4h, v2.4h, v3.4h, v16.4h, v17.4h, v18.4h, v19.4h, 7
-        transpose_4x8H  v16, v17, v18, v19, v26, v27, v28, v29
+        transpose_4x4H  v16, v17, v18, v19, v26, v27, v28, v29
 
         tr_4x4          v16.4h, v17.4h, v18.4h, v19.4h, v0.4h, v1.4h, v2.4h, v3.4h, 20 - \bitdepth
-        transpose_4x8H  v0, v1, v2, v3, v26, v27, v28, v29
+        transpose_4x4H  v0, v1, v2, v3, v26, v27, v28, v29
         st1             {v0.4h-v3.4h}, [x0]
         ret
 endfunc
