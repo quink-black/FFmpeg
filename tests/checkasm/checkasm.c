@@ -358,6 +358,8 @@ static const struct {
 #elif ARCH_LOONGARCH
     { "LSX",      "lsx",      AV_CPU_FLAG_LSX },
     { "LASX",     "lasx",     AV_CPU_FLAG_LASX },
+#elif ARCH_WASM
+    { "SIMD128",    "simd128",  AV_CPU_FLAG_SIMD128 },
 #endif
     { NULL }
 };
@@ -765,6 +767,8 @@ static LONG NTAPI signal_handler(EXCEPTION_POINTERS *e) {
 }
 #endif
 #else
+
+#ifndef _WASI_EMULATED_SIGNAL
 static void signal_handler(int s);
 
 static const struct sigaction signal_handler_act = {
@@ -779,6 +783,8 @@ static void signal_handler(int s) {
         checkasm_load_context(s);
     }
 }
+#endif // _WASI_EMULATED_SIGNAL
+
 #endif
 
 /* Compares a string with a wildcard pattern. */
@@ -928,10 +934,12 @@ int main(int argc, char *argv[])
     AddVectoredExceptionHandler(0, signal_handler);
 #endif
 #else
+#ifndef _WASI_EMULATED_SIGNAL
     sigaction(SIGBUS,  &signal_handler_act, NULL);
     sigaction(SIGFPE,  &signal_handler_act, NULL);
     sigaction(SIGILL,  &signal_handler_act, NULL);
     sigaction(SIGSEGV, &signal_handler_act, NULL);
+#endif // _WASI_EMULATED_SIGNAL
 #endif
 #if HAVE_PRCTL && defined(PR_SET_UNALIGN)
     prctl(PR_SET_UNALIGN, PR_UNALIGN_SIGBUS);
