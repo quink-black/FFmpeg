@@ -20,16 +20,19 @@
 
 #include "libavutil/aarch64/asm.S"
 
-.macro alf_luma_filter_pixel index, pix_size, addr1, addr2, offset1, offset2
+.macro alf_luma_load_pixel pix_size, addr1, addr2, offset1, offset2, p0, p1
     .if \pix_size == 1
         ldur            d3, [\addr1, #\offset1]
         ldur            d4, [\addr2, #\offset2]
-        uxtl            v6.8h, v3.8b
-        uxtl            v7.8h, v4.8b
+        uxtl            v\p0\().8h, v3.8b
+        uxtl            v\p1\().8h, v4.8b
     .else
-        ldur            q6, [\addr1, #(2*\offset1)]
-        ldur            q7, [\addr2, #(2*\offset2)]
+        ldur            q\p0, [\addr1, #(2*\offset1)]
+        ldur            q\p1, [\addr2, #(2*\offset2)]
     .endif
+.endm
+
+.macro alf_luma_filter_pixel index, pix_size, p0, p1
     .if \index < 8
         dup             v17.4h, v0.h[\index]        // clip
         dup             v18.4h, v16.h[\index]       // -clip
@@ -51,15 +54,15 @@
         ins             v18.d[1], v27.d[0]
         ins             v19.d[1], v28.d[0]
 
-        sub             v6.8h, v6.8h, v5.8h
-        sub             v7.8h, v7.8h, v5.8h
-        smin            v6.8h, v6.8h, v17.8h
-        smin            v7.8h, v7.8h, v17.8h
-        smax            v6.8h, v6.8h, v18.8h
-        smax            v7.8h, v7.8h, v18.8h
-        add             v6.8h, v6.8h, v7.8h
-        smlal           v20.4s, v19.4h, v6.4h       // v20: sum
-        smlal2          v21.4s, v19.8h, v6.8h       // v21: sum
+        sub             v3.8h, v\p0\().8h, v5.8h
+        sub             v4.8h, v\p1\().8h, v5.8h
+        smin            v3.8h, v3.8h, v17.8h
+        smin            v4.8h, v4.8h, v17.8h
+        smax            v3.8h, v3.8h, v18.8h
+        smax            v4.8h, v4.8h, v18.8h
+        add             v3.8h, v3.8h, v4.8h
+        smlal           v20.4s, v19.4h, v3.4h       // v20: sum
+        smlal2          v21.4s, v19.8h, v3.8h       // v21: sum
 .endm
 
 /* x0: dst
@@ -105,18 +108,43 @@
         mov             v21.16b, v20.16b
         ldr             x8, [pp, #(3*8)]            // p3
         ldr             x9, [pp, #(4*8)]            // p4
-        alf_luma_filter_pixel 0, \pix_size, x6, x7, 0, 0
+        alf_luma_load_pixel \pix_size, x6, x7, 0, 0, 6, 7
+        alf_luma_filter_pixel 0, \pix_size, 6, 7
 
         ldr             x6, [pp, #(1*8)]            // p1
         ldr             x7, [pp, #(2*8)]            // p2
-        alf_luma_filter_pixel 1, \pix_size, x8, x9, 1, -1
-        alf_luma_filter_pixel 2, \pix_size, x8, x9, 0, 0
-        alf_luma_filter_pixel 3, \pix_size, x8, x9, -1, 1
+        alf_luma_load_pixel \pix_size, x8, x9, 1, -1, 6, 7
+        alf_luma_load_pixel \pix_size, x8, x9, -1, 1, 29, 30
+        alf_luma_filter_pixel 1, \pix_size, 6, 7
+        alf_luma_filter_pixel 3, \pix_size, 29, 30
+        // 0, 0
+        ext             v3.16b, v29.16b, v29.16b, #2
+        ext             v4.16b, v7.16b, v7.16b, #2
+        ins             v3.h[7], v6.h[6]
+        ins             v4.h[7], v30.h[6]
+        alf_luma_filter_pixel 2, \pix_size, 3, 4
 
-        alf_luma_filter_pixel 4, \pix_size, x6, x7, 2, -2
-        alf_luma_filter_pixel 5, \pix_size, x6, x7, 1, -1
-        alf_luma_filter_pixel 6, \pix_size, x6, x7, 0, 0
-        alf_luma_filter_pixel 7, \pix_size, x6, x7, -1, 1
+        alf_luma_load_pixel \pix_size, x6, x7, 2, -2, 6, 7
+        alf_luma_load_pixel \pix_size, x6, x7, -2, 2, 29, 30
+        alf_luma_filter_pixel 4, \pix_size, 6, 7
+        // 1, -1
+        ext             v3.16b, v6.16b, v6.16b, #14
+        ext             v4.16b, v7.16b, v7.16b, #2
+        ins             v3.h[0], v29.h[3]
+        ins             v4.h[7], v30.h[4]
+        alf_luma_filter_pixel 5, \pix_size, 3, 4
+        // 0, 0
+        ext             v3.16b, v29.16b, v29.16b, #4
+        ext             v4.16b, v7.16b, v7.16b, #4
+        ins             v3.s[3], v6.s[2]
+        ins             v4.s[3], v30.s[2]
+        alf_luma_filter_pixel 6, \pix_size, 3, 4
+        // -1, 1
+        ext             v3.16b, v29.16b, v29.16b, #2
+        ext             v4.16b, v30.16b, v30.16b, #14
+        ins             v3.h[7], v6.h[4]
+        ins             v4.h[0], v7.h[3]
+        alf_luma_filter_pixel 7, \pix_size, 3, 4
 
         ldr             d0, [clip, #16]             // clip
         ldr             d1, [filter, #16]           // filter
@@ -125,10 +153,23 @@
         ldr             d22, [clip, #40]            // clip
         ldr             d24, [filter, #40]          // filter
         neg             v23.4h, v22.4h              // -clip
-        alf_luma_filter_pixel 8, \pix_size, x6, x7, -2, 2
-        alf_luma_filter_pixel 9, \pix_size, x5, x5, 3, -3
-        alf_luma_filter_pixel 10, \pix_size, x5, x5, 2, -2
-        alf_luma_filter_pixel 11, \pix_size, x5, x5, 1, -1
+        alf_luma_filter_pixel 8, \pix_size, 29, 30
+
+        alf_luma_load_pixel \pix_size, x5, x5, 3, -3, 6, 7
+        alf_luma_filter_pixel 9, \pix_size, 6, 7
+        // 2, -2
+        ext             v29.16b, v5.16b, v5.16b, #4
+        ext             v30.16b, v7.16b, v7.16b, #2
+        ins             v29.h[6], v6.h[5]
+        ins             v29.h[7], v6.h[6]
+        ins             v30.h[7], v5.h[5]
+        alf_luma_filter_pixel 10, \pix_size, 29, 30
+        // 1, -1
+        ext             v6.16b, v5.16b, v5.16b, #2
+        ext             v7.16b, v30.16b, v30.16b, #2
+        ins             v6.h[7], v29.h[6]
+        ins             v7.h[7], v5.h[6]
+        alf_luma_filter_pixel 11, \pix_size, 6, 7
 
         cbz             is_near_vb, 2f
         sshr            v20.4s, v20.4s, #10
