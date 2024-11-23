@@ -681,8 +681,8 @@ endfunc
         vy              .req x7
 
         ld1r            {v0.8h}, [vx], #2
-        ld1r            {v2.8h}, [vx]
         ld1r            {v1.8h}, [vy], #2
+        ld1r            {v2.8h}, [vx]
         ld1r            {v3.8h}, [vy]
         ins             v0.d[1], v2.d[1]
         ins             v1.d[1], v3.d[1]
@@ -813,27 +813,32 @@ function ff_vvc_derive_bdof_vx_vy_neon, export=1
         add             x14, src0, x13, lsl #8      // local src0
         add             x15, src1, x13, lsl #8      // local src1
         add             x17, x16, x13, lsl #5
-        ldr             q0, [x14, x16]
-        ldr             q1, [x15, x16]
-        ldr             q2, [gh0, x17]
-        ldr             q3, [gh1, x17]
-        ldr             q4, [gv0, x17]
-        ldr             q5, [gv1, x17]
-        add             x16, x16, #8
-        add             x17, x17, #8
+        add             x14, x14, x16
+        add             x15, x15, x16
+        ld1             {v0.8h, v1.8h}, [x14]
+        ld1             {v2.8h, v3.8h}, [x15]
+        add             x14, gh0, x17
+        add             x15, gh1, x17
+        add             x16, gv0, x17
+        add             x17, gv1, x17
+        ld1             {v4.8h, v5.8h}, [x14]
+        ld1             {v16.8h, v17.8h}, [x15]
+        ld1             {v18.8h, v19.8h}, [x16]
+        ld1             {v20.8h, v21.8h}, [x17]
+
+        ext             v1.16b, v0.16b, v1.16b, #8
+        ext             v3.16b, v2.16b, v3.16b, #8
+        ext             v5.16b, v4.16b, v5.16b, #8
+        ext             v17.16b, v16.16b, v17.16b, #8
+        ext             v19.16b, v18.16b, v19.16b, #8
+        ext             v21.16b, v20.16b, v21.16b, #8
+
         ins             v0.s[3], v6.s[3]
         ins             v1.s[3], v6.s[3]
         ins             v2.s[3], v6.s[3]
         ins             v3.s[3], v6.s[3]
         ins             v4.s[3], v6.s[3]
         ins             v5.s[3], v6.s[3]
-
-        ldr             q16, [x14, x16]
-        ldr             q17, [x15, x16]
-        ldr             q18, [gh0, x17]
-        ldr             q19, [gh1, x17]
-        ldr             q20, [gv0, x17]
-        ldr             q21, [gv1, x17]
         ins             v16.s[3], v6.s[3]
         ins             v17.s[3], v6.s[3]
         ins             v18.s[3], v6.s[3]
@@ -844,36 +849,36 @@ function ff_vvc_derive_bdof_vx_vy_neon, export=1
         tbz             pad_mask, #0, 20f
         // pad left
         ins             v0.h[0], v0.h[1]
-        ins             v1.h[0], v1.h[1]
         ins             v2.h[0], v2.h[1]
-        ins             v3.h[0], v3.h[1]
         ins             v4.h[0], v4.h[1]
-        ins             v5.h[0], v5.h[1]
+        ins             v16.h[0], v16.h[1]
+        ins             v18.h[0], v18.h[1]
+        ins             v20.h[0], v20.h[1]
 20:
         tbz             pad_mask, #2, 21f
         // pad right
-        ins             v16.h[5], v16.h[4]
+        ins             v1.h[5], v1.h[4]
+        ins             v3.h[5], v3.h[4]
+        ins             v5.h[5], v5.h[4]
         ins             v17.h[5], v17.h[4]
-        ins             v18.h[5], v18.h[4]
         ins             v19.h[5], v19.h[4]
-        ins             v20.h[5], v20.h[4]
         ins             v21.h[5], v21.h[4]
 21:
         sshr            v0.8h, v0.8h, #4
-        sshr            v1.8h, v1.8h, #4
-        add             v2.8h, v2.8h, v3.8h
-        add             v4.8h, v4.8h, v5.8h
-        sub             v0.8h, v0.8h, v1.8h         // diff
-        sshr            v2.8h, v2.8h, #1            // temph
-        sshr            v4.8h, v4.8h, #1            // tempv
+        sshr            v2.8h, v2.8h, #4
+        add             v4.8h, v4.8h, v16.8h
+        add             v18.8h, v18.8h, v20.8h
+        sub             v0.8h, v0.8h, v2.8h         // diff
+        sshr            v2.8h, v4.8h, #1            // temph
+        sshr            v4.8h, v18.8h, #1           // tempv
 
-        sshr            v16.8h, v16.8h, #4
-        sshr            v17.8h, v17.8h, #4
-        add             v18.8h, v18.8h, v19.8h
-        add             v20.8h, v20.8h, v21.8h
-        sub             v16.8h, v16.8h, v17.8h      // diff
-        sshr            v18.8h, v18.8h, #1          // temph
-        sshr            v20.8h, v20.8h, #1          // tempv
+        sshr            v1.8h, v1.8h, #4
+        sshr            v3.8h, v3.8h, #4
+        add             v5.8h, v5.8h, v17.8h
+        add             v19.8h, v19.8h, v21.8h
+        sub             v16.8h, v1.8h, v3.8h        // diff
+        sshr            v18.8h, v5.8h, #1           // temph
+        sshr            v20.8h, v19.8h, #1          // tempv
 
         abs             v3.8h, v2.8h
         abs             v5.8h, v4.8h
