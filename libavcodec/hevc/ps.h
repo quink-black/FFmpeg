@@ -171,6 +171,9 @@ typedef struct RepFormat {
 typedef struct HEVCVPS {
     unsigned int vps_id;
 
+    uint8_t vps_base_layer_internal_flag;
+    uint8_t vps_base_layer_available_flag;
+
     uint8_t vps_temporal_id_nesting_flag;
     int vps_max_layers;
     int vps_max_sub_layers; ///< vps_max_temporal_layers_minus1 + 1
@@ -237,6 +240,7 @@ typedef struct HEVCVPS {
 
     // NumDirectRefLayers[layer_idx]
     uint8_t num_direct_ref_layers[HEVC_VPS_MAX_LAYERS];
+    uint8_t num_add_layer_sets;
 
     RepFormat rep_format;
 
