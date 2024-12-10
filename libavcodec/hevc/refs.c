@@ -103,7 +103,7 @@ static HEVCFrame *alloc_frame(HEVCContext *s, HEVCLayerContext *l)
         }
 
         // add view ID side data if it's nontrivial
-        if (vps->nb_layers > 1 || view_id) {
+        if (!ff_hevc_is_alpha_video(s) && (vps->nb_layers > 1 || view_id)) {
             HEVCSEITDRDI *tdrdi = &s->sei.tdrdi;
             AVFrameSideData *sd = av_frame_side_data_new(&frame->f->side_data,
                                                          &frame->f->nb_side_data,
@@ -162,6 +162,14 @@ static HEVCFrame *alloc_frame(HEVCContext *s, HEVCLayerContext *l)
             goto fail;
 
         frame->pps = ff_refstruct_ref_c(s->pps);
+        if (l != &s->layers[0] && ff_hevc_is_alpha_video(s)) {
+            AVFrame *alpha = frame->f;
+            AVFrame *base = s->layers[0].cur_frame->f;
+
+            av_buffer_replace(&alpha->buf[0], base->buf[3]);
+            alpha->linesize[0] = base->linesize[3];
+            alpha->data[0] = base->data[3];
+        }
 
         return frame;
 fail:
