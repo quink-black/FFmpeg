@@ -450,14 +450,6 @@ static void hevc_vps_free(FFRefStructOpaque opaque, void *obj)
     av_freep(&vps->data);
 }
 
-enum ScalabilityMask {
-    HEVC_SCALABILITY_DEPTH      = 0,
-    HEVC_SCALABILITY_MULTIVIEW  = 1,
-    HEVC_SCALABILITY_SPATIAL    = 2,
-    HEVC_SCALABILITY_AUXILIARY  = 3,
-    HEVC_SCALABILITY_MASK_MAX   = 15,
-};
-
 enum DependencyType {
     HEVC_DEP_TYPE_SAMPLE = 0,
     HEVC_DEP_TYPE_MV     = 1,
