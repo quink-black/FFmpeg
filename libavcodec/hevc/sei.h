@@ -21,6 +21,7 @@
 #ifndef AVCODEC_HEVC_SEI_H
 #define AVCODEC_HEVC_SEI_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "libavutil/buffer.h"
@@ -95,6 +96,18 @@ typedef struct HEVCSEITDRDI {
     uint8_t three_dimensional_reference_displays_extension_flag;
 } HEVCSEITDRDI;
 
+typedef struct HEVCSEIAlphaChannelInfo {
+    bool     has_alpha_channel_info;
+    uint8_t  alpha_channel_cancel_flag;
+    uint8_t  alpha_channel_use_idc;
+    uint8_t  alpha_channel_bit_depth_minus8;
+    uint16_t alpha_transparent_value;
+    uint16_t alpha_opaque_value;
+    uint8_t  alpha_channel_incr_flag;
+    uint8_t  alpha_channel_clip_flag;
+    uint8_t  alpha_channel_clip_type_flag;
+} HEVCSEIAlphaChannelInfo;
+
 typedef struct HEVCSEI {
     H2645SEI common;
     HEVCSEIPictureHash picture_hash;
@@ -102,6 +115,7 @@ typedef struct HEVCSEI {
     int active_seq_parameter_set_id;
     HEVCSEITimeCode timecode;
     HEVCSEITDRDI tdrdi;
+    HEVCSEIAlphaChannelInfo alpha;
 } HEVCSEI;
 
 struct HEVCParamSets;

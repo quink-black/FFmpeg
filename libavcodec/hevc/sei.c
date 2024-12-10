@@ -150,6 +150,34 @@ static int decode_nal_sei_timecode(HEVCSEITimeCode *s, GetBitContext *gb)
     return 0;
 }
 
+static int decode_nal_sei_alpha_info(HEVCSEIAlphaChannelInfo *s, GetBitContext *gb)
+{
+    int length;
+
+    s->has_alpha_channel_info = true;
+
+    s->alpha_channel_cancel_flag = get_bits1(gb);
+    if (!s->alpha_channel_cancel_flag) {
+        s->alpha_channel_use_idc = 2;
+        s->alpha_channel_incr_flag = 0;
+        s->alpha_channel_clip_flag = 0;
+
+        return 0;
+    }
+
+    s->alpha_channel_use_idc = get_bits(gb, 3);
+    s->alpha_channel_bit_depth_minus8 = get_bits(gb, 3);
+    length = s->alpha_channel_bit_depth_minus8 + 9;
+    s->alpha_transparent_value = get_bits(gb, length);
+    s->alpha_opaque_value = get_bits(gb, length);
+    s->alpha_channel_incr_flag = get_bits1(gb);
+    s->alpha_channel_clip_flag = get_bits1(gb);
+    if (s->alpha_channel_clip_flag)
+        s->alpha_channel_clip_type_flag = get_bits1(gb);
+
+    return 0;
+}
+
 static int decode_nal_sei_3d_reference_displays_info(HEVCSEITDRDI *s, GetBitContext *gb)
 {
     s->prec_ref_display_width = get_ue_golomb(gb);
@@ -216,6 +244,8 @@ static int decode_nal_sei_prefix(GetBitContext *gb, GetByteContext *gbyte,
         return decode_nal_sei_active_parameter_sets(s, gb, logctx);
     case SEI_TYPE_TIME_CODE:
         return decode_nal_sei_timecode(&s->timecode, gb);
+    case SEI_TYPE_ALPHA_CHANNEL_INFO:
+        return decode_nal_sei_alpha_info(&s->alpha, gb);
     case SEI_TYPE_THREE_DIMENSIONAL_REFERENCE_DISPLAYS_INFO:
         return decode_nal_sei_3d_reference_displays_info(&s->tdrdi, gb);
     default: {
