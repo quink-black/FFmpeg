@@ -458,12 +458,44 @@ static int export_multilayer(HEVCContext *s, const HEVCVPS *vps)
     return 0;
 }
 
+int ff_hevc_is_alpha_video(const HEVCContext *s) {
+    const HEVCVPS *vps;
+    int ret = 0;
+
+    if (!s->vps)
+        return 0;
+
+    vps = s->vps;
+    if (vps->nb_layers != 2 || !vps->layer_id_in_nuh[1])
+        return 0;
+
+    ret = (s->vps->scalability_mask_flag & HEVC_SCALABILITY_AUXILIARY) &&
+          s->sei.alpha.has_alpha_channel_info;
+
+    av_log(s->avctx, AV_LOG_DEBUG, "Multi layer video, %s alpha video\n",
+           ret ? "is" : "not");
+
+    return ret;
+}
+
 static int setup_multilayer(HEVCContext *s, const HEVCVPS *vps)
 {
     unsigned layers_active_output = 0, highest_layer;
 
     s->layers_active_output = 1;
     s->layers_active_decode = 1;
+
+    if (ff_hevc_is_alpha_video(s)) {
+        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(s->avctx->pix_fmt);
+
+        if (!(desc->flags & AV_PIX_FMT_FLAG_ALPHA))
+            return 0;
+
+        s->layers_active_decode = (1 << vps->nb_layers) - 1;
+        s->layers_active_output = 1;
+
+        return 0;
+    }
 
     // nothing requested - decode base layer only
     if (!s->nb_view_ids)
@@ -522,6 +554,34 @@ static int setup_multilayer(HEVCContext *s, const HEVCVPS *vps)
     return 0;
 }
 
+static enum AVPixelFormat map_to_alpha_format(HEVCContext *s,
+                                              enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_YUV420P:
+    case AV_PIX_FMT_YUVJ420P:
+        return AV_PIX_FMT_YUVA420P;
+    case AV_PIX_FMT_YUV420P10:
+        return AV_PIX_FMT_YUVA420P10;
+    case AV_PIX_FMT_YUV444P:
+        return AV_PIX_FMT_YUVA444P;
+    case AV_PIX_FMT_YUV422P:
+        return AV_PIX_FMT_YUVA422P;
+    case AV_PIX_FMT_YUV422P10LE:
+        return AV_PIX_FMT_YUVA422P10LE;
+    case AV_PIX_FMT_YUV444P10:
+        return AV_PIX_FMT_YUVA444P10;
+    case AV_PIX_FMT_YUV444P12:
+        return AV_PIX_FMT_YUVA444P12;
+    case AV_PIX_FMT_YUV422P12:
+        return AV_PIX_FMT_YUVA422P12;
+    default:
+        av_log(s->avctx, AV_LOG_WARNING, "No alpha pixel format map for %s\n",
+               av_get_pix_fmt_name(pix_fmt));
+        return AV_PIX_FMT_NONE;
+    }
+}
+
 static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 {
 #define HWACCEL_MAX (CONFIG_HEVC_DXVA2_HWACCEL + \
@@ -532,8 +592,12 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
                      CONFIG_HEVC_VIDEOTOOLBOX_HWACCEL + \
                      CONFIG_HEVC_VDPAU_HWACCEL + \
                      CONFIG_HEVC_VULKAN_HWACCEL)
-    enum AVPixelFormat pix_fmts[HWACCEL_MAX + 2], *fmt = pix_fmts;
+    enum AVPixelFormat pix_fmts[HWACCEL_MAX + 3], *fmt = pix_fmts;
+    enum AVPixelFormat alpha_fmt = AV_PIX_FMT_NONE;
     int ret;
+
+    if (ff_hevc_is_alpha_video(s))
+        alpha_fmt = map_to_alpha_format(s, sps->pix_fmt);
 
     switch (sps->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
@@ -650,6 +714,8 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
         break;
     }
 
+    if (alpha_fmt != AV_PIX_FMT_NONE)
+        *fmt++ = alpha_fmt;
     *fmt++ = sps->pix_fmt;
     *fmt = AV_PIX_FMT_NONE;
 
@@ -3182,6 +3248,12 @@ static int hevc_frame_start(HEVCContext *s, HEVCLayerContext *l,
                 !sps->vui.common.video_signal_type_present_flag)
                 pix_fmt = sps_base->pix_fmt;
 
+            // Ignore range mismatch between base layer and alpha layer
+            if (ff_hevc_is_alpha_video(s) &&
+                sps_base->pix_fmt == AV_PIX_FMT_YUV420P &&
+                pix_fmt == AV_PIX_FMT_YUVJ420P)
+                pix_fmt = sps_base->pix_fmt;
+
             if (pix_fmt     != sps_base->pix_fmt ||
                 sps->width  != sps_base->width   ||
                 sps->height != sps_base->height) {
@@ -4004,6 +4076,7 @@ static int hevc_update_thread_context(AVCodecContext *dst,
     s->sei.common.display_orientation  = s0->sei.common.display_orientation;
     s->sei.common.alternative_transfer = s0->sei.common.alternative_transfer;
     s->sei.tdrdi                       = s0->sei.tdrdi;
+    s->sei.alpha                       = s0->sei.alpha;
 
     return 0;
 }
