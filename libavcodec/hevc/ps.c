@@ -460,14 +460,14 @@ static int decode_vps_ext(GetBitContext *gb, AVCodecContext *avctx, HEVCVPS *vps
                           uint64_t layer1_id_included)
 {
     PTL ptl_dummy;
-    uint8_t max_sub_layers[HEVC_MAX_LAYERS];
+    uint8_t max_sub_layers[HEVC_MAX_LAYERS] = {1, 1};
 
     int splitting_flag, dimension_id_len, view_id_len, num_add_olss, num_scalability_types,
         default_output_layer_idc, direct_dep_type_len, direct_dep_type,
         sub_layers_max_present, sub_layer_flag_info_present_flag, nb_ptl;
     unsigned non_vui_extension_length;
 
-    if (vps->vps_max_layers == 1 || vps->vps_num_layer_sets == 1) {
+    if (vps->vps_max_layers == 1) {
         av_log(avctx, AV_LOG_VERBOSE, "Ignoring VPS extensions with a single layer\n");
         return 0;
     }
@@ -535,7 +535,8 @@ static int decode_vps_ext(GetBitContext *gb, AVCodecContext *avctx, HEVCVPS *vps
         return AVERROR_PATCHWELCOME;
     }
 
-    if (!(vps->scalability_mask_flag & HEVC_SCALABILITY_MULTIVIEW)) {
+    if (!(vps->scalability_mask_flag &
+          (HEVC_SCALABILITY_MULTIVIEW | HEVC_SCALABILITY_AUXILIARY))) {
         av_log(avctx, AV_LOG_ERROR, "Scalability type %d not supported\n",
                15 - ff_ctz(vps->scalability_mask_flag));
         return AVERROR_PATCHWELCOME;
@@ -571,16 +572,25 @@ static int decode_vps_ext(GetBitContext *gb, AVCodecContext *avctx, HEVCVPS *vps
         for (int i = 0; i < 2 /* NumViews */; i++)
             vps->view_id[i] = get_bits(gb, view_id_len);
 
-    if (!get_bits1(gb) /* direct_dependency_flag */) {
-        av_log(avctx, AV_LOG_WARNING, "Independent output layers not supported\n");
-        return AVERROR_PATCHWELCOME;
+    /* direct_dependency_flag */
+    vps->num_direct_ref_layers[1] = get_bits1(gb);
+    if (!vps->num_direct_ref_layers[1]) {
+        vps->num_add_layer_sets = get_ue_golomb(gb);
+        for (int i = 0; i < vps->num_add_layer_sets; i++) {
+            /* highest_layer_idx_plus1 */
+            skip_bits1(gb);
+        }
     }
-    vps->num_direct_ref_layers[1] = 1;
+    vps->num_output_layer_sets = vps->vps_num_layer_sets + vps->num_add_layer_sets;
+    if (vps->num_output_layer_sets != 2)
+        return AVERROR_INVALIDDATA;
 
     sub_layers_max_present = get_bits1(gb); // vps_sub_layers_max_minus1_present_flag
-    for (int i = 0; i < vps->vps_max_layers; i++)
-        max_sub_layers[i] = sub_layers_max_present ? get_bits(gb, 3) + 1 :
-                                                     vps->vps_max_sub_layers;
+    if (sub_layers_max_present) {
+        for (int i = 0; i < vps->vps_max_layers; i++)
+            max_sub_layers[i] = sub_layers_max_present ? get_bits(gb, 3) + 1 :
+                                                         vps->vps_max_sub_layers;
+    }
 
     if (get_bits1(gb) /* max_tid_ref_present_flag */)
         skip_bits(gb, 3); // max_tid_il_ref_pics_plus1
@@ -613,18 +623,24 @@ static int decode_vps_ext(GetBitContext *gb, AVCodecContext *avctx, HEVCVPS *vps
     }
 
     /* Consequence of established layer dependencies */
-    if (layer1_id_included != ((1 << vps->layer_id_in_nuh[0]) |
+    if (layer1_id_included &&
+        layer1_id_included != ((1 << vps->layer_id_in_nuh[0]) |
                                (1 << vps->layer_id_in_nuh[1]))) {
-        av_log(avctx, AV_LOG_ERROR, "Dependent layer not included in layer ID?\n");
-        return AVERROR_PATCHWELCOME;
+            av_log(avctx, AV_LOG_ERROR,
+                   "Dependent layer not included in layer ID?\n");
+            return AVERROR_PATCHWELCOME;
     }
+    if (!layer1_id_included)
+        vps->ols[1] = 2;
+    else
+        vps->ols[1] = 3;
 
-    vps->num_output_layer_sets = 2;
-    vps->ols[1] = 3;
+    if (vps->vps_num_layer_sets == 1 || default_output_layer_idc == 2)
+        skip_bits1(gb);
 
     for (int j = 0; j < av_popcount64(vps->ols[1]); j++) {
         int ptl_idx = get_bits(gb, av_ceil_log2(nb_ptl));
-        if (ptl_idx < 1 || ptl_idx >= nb_ptl) {
+        if (ptl_idx >= nb_ptl) {
             av_log(avctx, AV_LOG_ERROR, "Invalid PTL index: %d\n", ptl_idx);
             return AVERROR_INVALIDDATA;
         }
@@ -667,6 +683,8 @@ static int decode_vps_ext(GetBitContext *gb, AVCodecContext *avctx, HEVCVPS *vps
 
     vps->max_one_active_ref_layer = get_bits1(gb);
     vps->poc_lsb_aligned          = get_bits1(gb);
+    if (!vps->num_direct_ref_layers[1])
+        vps->poc_lsb_not_present = get_bits1(gb) << 1;
 
     sub_layer_flag_info_present_flag = get_bits1(gb);
     for (int j = 0; j < FFMAX(max_sub_layers[0], max_sub_layers[1]); j++) {
@@ -688,12 +706,14 @@ static int decode_vps_ext(GetBitContext *gb, AVCodecContext *avctx, HEVCVPS *vps
         return AVERROR_INVALIDDATA;
     }
 
-    skip_bits1(gb); /* direct_depenency_all_layers_flag */
-    direct_dep_type = get_bits_long(gb, direct_dep_type_len);
-    if (direct_dep_type > HEVC_DEP_TYPE_BOTH) {
-        av_log(avctx, AV_LOG_WARNING, "Unsupported direct_dep_type: %d\n",
-               direct_dep_type);
-        return AVERROR_PATCHWELCOME;
+    /* direct_depenency_all_layers_flag */
+    if (get_bits1(gb)) {
+        direct_dep_type = get_bits_long(gb, direct_dep_type_len);
+        if (direct_dep_type > HEVC_DEP_TYPE_BOTH) {
+            av_log(avctx, AV_LOG_WARNING, "Unsupported direct_dep_type: %d\n",
+                   direct_dep_type);
+            return AVERROR_PATCHWELCOME;
+        }
     }
 
     non_vui_extension_length = get_ue_golomb(gb);
