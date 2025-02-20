@@ -217,12 +217,131 @@ function ff_vvc_\type\()_\bit_depth\()_neon, export=1
 endfunc
 .endm
 
-vvc_avg avg, 8
-vvc_avg avg, 10
-vvc_avg avg, 12
 vvc_avg w_avg, 8
 vvc_avg w_avg, 10
 vvc_avg w_avg, 12
+
+.macro vvc_avg2 bit_depth
+function ff_vvc_avg_\bit_depth\()_neon, export=1
+        mov             x10, #(VVC_MAX_PB_SIZE * 2)
+.if \bit_depth != 8
+        movi            v16.8h, #0
+        movi            v17.16b, #255
+        ushr            v17.8h, v17.8h, #(16 - \bit_depth)
+.endif
+        cmp             w4, #8
+        b.gt            16f
+        b.eq            8f
+        cmp             w4, #4
+        b.eq            4f
+
+2: // width == 2
+        ldr             s0, [x2]
+        subs            w5, w5, #1
+        ldr             s1, [x3]
+.if \bit_depth == 8
+        shadd           v0.4h, v0.4h, v1.4h
+        sqrshrun        v0.8b, v0.8h, #(15 - 1 - \bit_depth)
+        str             h0, [x0]
+.else
+        shadd           v0.4h, v0.4h, v1.4h
+        srshr           v0.4h, v0.4h, #(15 - 1 - \bit_depth)
+        smax            v0.4h, v0.4h, v16.4h
+        smin            v0.4h, v0.4h, v17.4h
+        str             s0, [x0]
+.endif
+        add             x2, x2, #(VVC_MAX_PB_SIZE * 2)
+        add             x3, x3, #(VVC_MAX_PB_SIZE * 2)
+        add             x0, x0, x1
+        b.ne            2b
+        ret
+
+4: // width == 4
+        ldr             d0, [x2]
+        subs            w5, w5, #1
+        ldr             d1, [x3]
+.if \bit_depth == 8
+        shadd           v0.4h, v0.4h, v1.4h
+        sqrshrun        v0.8b, v0.8h, #(15 - 1 - \bit_depth)
+        str             s0, [x0]
+.else
+        shadd           v0.4h, v0.4h, v1.4h
+        srshr           v0.4h, v0.4h, #(15 - 1 - \bit_depth)
+        smax            v0.4h, v0.4h, v16.4h
+        smin            v0.4h, v0.4h, v17.4h
+        str             d0, [x0]
+.endif
+        add             x2, x2, #(VVC_MAX_PB_SIZE * 2)
+        add             x3, x3, #(VVC_MAX_PB_SIZE * 2)
+        add             x0, x0, x1
+        b.ne            4b
+        ret
+
+8: // width == 8
+        ldr             q0, [x2]
+        subs            w5, w5, #1
+        ldr             q1, [x3]
+.if \bit_depth == 8
+        shadd           v0.8h, v0.8h, v1.8h
+        sqrshrun        v0.8b, v0.8h, #(15 - 1 - \bit_depth)
+        str             d0, [x0]
+.else
+        shadd           v0.8h, v0.8h, v1.8h
+        srshr           v0.8h, v0.8h, #(15 - 1 - \bit_depth)
+        smax            v0.8h, v0.8h, v16.8h
+        smin            v0.8h, v0.8h, v17.8h
+        str             q0, [x0]
+.endif
+        add             x2, x2, #(VVC_MAX_PB_SIZE * 2)
+        add             x3, x3, #(VVC_MAX_PB_SIZE * 2)
+        add             x0, x0, x1
+        b.ne            8b
+        ret
+
+16: // width >= 16
+.if \bit_depth == 8
+        sub             x1, x1, w4, sxtw
+.else
+        sub             x1, x1, w4, sxtw #1
+.endif
+        sub             x10, x10, w4, sxtw #1
+3:
+        mov             w6, w4 // width
+1:
+        ldp             q0, q1, [x2], #32
+        subs            w6, w6, #16
+        ldp             q2, q3, [x3], #32
+.if \bit_depth == 8
+        shadd           v4.8h, v0.8h, v2.8h
+        shadd           v5.8h, v1.8h, v3.8h
+        sqrshrun        v0.8b, v4.8h, #6
+        sqrshrun2       v0.16b, v5.8h, #6
+        st1             {v0.16b}, [x0], #16
+.else
+        shadd           v4.8h, v0.8h, v2.8h
+        shadd           v5.8h, v1.8h, v3.8h
+        srshr           v0.8h, v4.8h, #(15 - 1 - \bit_depth)
+        srshr           v1.8h, v5.8h, #(15 - 1 - \bit_depth)
+        smax            v0.8h, v0.8h, v16.8h
+        smax            v1.8h, v1.8h, v16.8h
+        smin            v0.8h, v0.8h, v17.8h
+        smin            v1.8h, v1.8h, v17.8h
+        stp             q0, q1, [x0], #32
+.endif
+        b.ne            1b
+
+        subs            w5, w5, #1
+        add             x2, x2, x10
+        add             x3, x3, x10
+        add             x0, x0, x1
+        b.ne            3b
+        ret
+endfunc
+.endm
+
+vvc_avg2 8
+vvc_avg2 10
+vvc_avg2 12
 
 /* x0: int16_t *dst
  * x1: const uint8_t *_src
