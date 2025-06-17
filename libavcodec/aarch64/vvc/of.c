@@ -37,31 +37,13 @@ void ff_vvc_prof_grad_filter_8x_neon(int16_t *gradient_h,
 
 #define VVC_SIGN(v) (v < 0 ? -1 : !!v)
 
-void ff_apply_bdof_intrinsic(uint8_t *_dst, ptrdiff_t _dst_stride,
-                               const int16_t *_src0, const int16_t *_src1,
-                               int block_w, int block_h)
+static void vvc_derive_bdof_vx_vy(const int16_t *_src0, const int16_t *_src1, int16_t *gradient_h[2], int16_t *gradient_v[2], int vx[16], int vy[16], int block_w, int block_h)
 {
-    // +2 for pad left and right
-    int16_t gradient_buf_h[2][BDOF_BLOCK_SIZE * BDOF_BLOCK_SIZE + 2];
-    int16_t gradient_buf_v[2][BDOF_BLOCK_SIZE * BDOF_BLOCK_SIZE + 2];
-    int16_t *gradient_h[2] = {&gradient_buf_h[0][1], &gradient_buf_h[1][1]};
-    int16_t *gradient_v[2] = {&gradient_buf_v[0][1], &gradient_buf_v[1][1]};
-    ptrdiff_t dst_stride = _dst_stride;
-    uint8_t *dst = _dst;
-
-    ff_vvc_prof_grad_filter_8x_neon(gradient_h[0], gradient_v[0],
-                     BDOF_BLOCK_SIZE,
-                     _src0, MAX_PB_SIZE, block_w, block_h);
-    ff_vvc_prof_grad_filter_8x_neon(gradient_h[1], gradient_v[1],
-                     BDOF_BLOCK_SIZE,
-                     _src1, MAX_PB_SIZE, block_w, block_h);
-
     int line_table[2][4][5] = {0};
     for (int y = 0; y < block_h; y += BDOF_MIN_BLOCK_SIZE) {
         for (int x = 0; x < block_w; x += BDOF_MIN_BLOCK_SIZE) {
             const int16_t *src0 = _src0 + y * MAX_PB_SIZE + x;
             const int16_t *src1 = _src1 + y * MAX_PB_SIZE + x;
-            uint8_t *d = dst + x;
             int idx = BDOF_BLOCK_SIZE * y + x;
             const int16_t *gh[] = {gradient_h[0] + idx, gradient_h[1] + idx};
             const int16_t *gv[] = {gradient_v[0] + idx, gradient_v[1] + idx};
@@ -151,16 +133,49 @@ void ff_apply_bdof_intrinsic(uint8_t *_dst, ptrdiff_t _dst_stride,
                     line_table[1][x / BDOF_MIN_BLOCK_SIZE][4] = save[4];
                 }
             }
-            int vx, vy;
-            vx = sgx2 > 0 ? av_clip((sgxdi * (1 << 2)) >> av_log2(sgx2), -thres + 1, thres - 1) : 0;
-            vy = sgy2 > 0 ? av_clip( ((sgydi * (1 << 2)) - ((vx * sgxgy) >> 1)) >> av_log2(sgy2), -thres + 1, thres - 1) : 0;
-            uint8_t *dst1 = d;
+            vx[y + x / BDOF_MIN_BLOCK_SIZE] = sgx2 > 0 ? av_clip((sgxdi * (1 << 2)) >> av_log2(sgx2), -thres + 1, thres - 1) : 0;
+            vy[y + x / BDOF_MIN_BLOCK_SIZE] = sgy2 > 0 ? av_clip( ((sgydi * (1 << 2)) - ((vx[y + x / BDOF_MIN_BLOCK_SIZE] * sgxgy) >> 1)) >> av_log2(sgy2), -thres + 1, thres - 1) : 0;
+        }
+    }
+}
+
+void ff_apply_bdof_intrinsic(uint8_t *_dst, ptrdiff_t _dst_stride,
+                               const int16_t *_src0, const int16_t *_src1,
+                               int block_w, int block_h)
+{
+    // +2 for pad left and right
+    int16_t gradient_buf_h[2][BDOF_BLOCK_SIZE * BDOF_BLOCK_SIZE + 2];
+    int16_t gradient_buf_v[2][BDOF_BLOCK_SIZE * BDOF_BLOCK_SIZE + 2];
+    int16_t *gradient_h[2] = {&gradient_buf_h[0][1], &gradient_buf_h[1][1]};
+    int16_t *gradient_v[2] = {&gradient_buf_v[0][1], &gradient_buf_v[1][1]};
+    ptrdiff_t dst_stride = _dst_stride;
+    uint8_t *dst = _dst;
+
+    ff_vvc_prof_grad_filter_8x_neon(gradient_h[0], gradient_v[0],
+                     BDOF_BLOCK_SIZE,
+                     _src0, MAX_PB_SIZE, block_w, block_h);
+    ff_vvc_prof_grad_filter_8x_neon(gradient_h[1], gradient_v[1],
+                     BDOF_BLOCK_SIZE,
+                     _src1, MAX_PB_SIZE, block_w, block_h);
+
+    int vx_buf[16], vy_buf[16];
+    vvc_derive_bdof_vx_vy(_src0, _src1, gradient_h, gradient_v, vx_buf, vy_buf, block_w, block_h);
+    for (int y = 0; y < block_h; y += BDOF_MIN_BLOCK_SIZE) {
+        for (int x = 0; x < block_w; x += BDOF_MIN_BLOCK_SIZE) {
+            const int16_t *src0 = _src0 + y * MAX_PB_SIZE + x;
+            const int16_t *src1 = _src1 + y * MAX_PB_SIZE + x;
+            int idx = BDOF_BLOCK_SIZE * y + x;
+            const int16_t *gh[] = {gradient_h[0] + idx, gradient_h[1] + idx};
+            const int16_t *gv[] = {gradient_v[0] + idx, gradient_v[1] + idx};
+            uint8_t *dst1 = dst + x;;
             const int16_t *src01 = src0;
             const int16_t *src11 = src1;
             const int bitDepth = 8;
             const int shift4 = 15 - bitDepth;
             const int offset4 = 1 << (shift4 - 1);
 
+            int vx = vx_buf[y + x / BDOF_MIN_BLOCK_SIZE];
+            int vy = vy_buf[y + x / BDOF_MIN_BLOCK_SIZE];
             for (int y3 = 0; y3 < BDOF_MIN_BLOCK_SIZE; y3++) {
                 for (int x2 = 0; x2 < BDOF_MIN_BLOCK_SIZE; x2++) {
                     const int idx2 = y3 * BDOF_BLOCK_SIZE + x2;
