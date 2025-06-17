@@ -27,6 +27,8 @@
 #include "libavcodec/vvc/dec.h"
 #include "libavcodec/vvc/ctu.h"
 
+#include "of.h"
+
 #define BDOF_BLOCK_SIZE         16
 #define BDOF_MIN_BLOCK_SIZE     4
 
@@ -195,7 +197,7 @@ void ff_vvc_dsp_init_aarch64(VVCDSPContext *const c, const int bd)
         c->inter.w_avg = vvc_w_avg_8;
         c->inter.dmvr[0][0] = ff_vvc_dmvr_8_neon;
         c->inter.dmvr[1][1] = ff_vvc_dmvr_hv_8_neon;
-        c->inter.apply_bdof = apply_bdof_8;
+        c->inter.apply_bdof = ff_apply_bdof_intrinsic;
 
         c->sao.band_filter[0] = ff_h26x_sao_band_filter_8x8_8_neon;
         for (int i = 1; i < FF_ARRAY_ELEMS(c->sao.band_filter); i++)
