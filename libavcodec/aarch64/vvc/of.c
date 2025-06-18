@@ -91,10 +91,27 @@ void ff_vvc_prof_grad_filter_8x_neon(int16_t *gradient_h,
                 }
  */
 
+static inline int32x4_t padding_edge(int16x8_t input, uint8x16_t table)
+{
+    uint8x16_t v0 = vqtbl1q_u8(vreinterpretq_u8_s16(input), table);
+    int16x8_t v1 = vreinterpretq_s16_u8(v0);
+
+    int32x4_t low = vaddl_s16(vget_low_s16(v1), vget_low_s16(input));
+    int32x4_t high = vaddl_high_s16(v1, input);
+    low = vpaddq_s32(low, high);
+    return low;
+}
+
 static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1, int16_t *gradient_h[2], int16_t *gradient_v[2], int16_t vx[16], int16_t vy[16], int block_h)
 {
     int line_table[2][4][5] = {0};
     const int thres = 1 << 4;
+    const int shift2 = 4;
+    const int shift3 = 1;
+
+    const uint8_t idx[] = {0, 1, 16, 16, 16, 16, 8, 9,
+                           6, 7, 16, 16, 16, 16, 14, 15};
+    const uint8x16_t edge_table = vld1q_u8(idx);
     for (int y = 0; y < block_h; y += BDOF_MIN_BLOCK_SIZE) {
         int sgx2[2] = {0};
         int sgy2[2] = {0};
@@ -102,83 +119,69 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
         int sgxdi[2] = {0};
         int sgydi[2] = {0};
 
-        {
-            const int16_t *src0 = _src0 + y * MAX_PB_SIZE;
-            const int16_t *src1 = _src1 + y * MAX_PB_SIZE;
-            int idx = BDOF_BLOCK_SIZE * y;
-            const int16_t *gh[] = {gradient_h[0] + idx, gradient_h[1] + idx};
-            const int16_t *gv[] = {gradient_v[0] + idx, gradient_v[1] + idx};
-            const int shift2 = 4;
-            const int shift3 = 1;
-            const int padLeft = 1;
-            const int padTop = !y;
-            const int padRight = 0;
-            const int padBottom = y + BDOF_MIN_BLOCK_SIZE == block_h;
+        const int16_t *src0 = _src0 + y * MAX_PB_SIZE;
+        const int16_t *src1 = _src1 + y * MAX_PB_SIZE;
+        int idx = BDOF_BLOCK_SIZE * y;
+        const int16_t *gh[] = {gradient_h[0] + idx, gradient_h[1] + idx};
+        const int16_t *gv[] = {gradient_v[0] + idx, gradient_v[1] + idx};
+        const int padLeft = 1;
+        const int padTop = !y;
+        const int padRight = 0;
+        const int padBottom = y + BDOF_MIN_BLOCK_SIZE == block_h;
 
-            for (int y2 = -1; y2 < BDOF_MIN_BLOCK_SIZE + 1; y2++) {
-                const int dy = y2 + (padTop && y2 < 0) - (padBottom && y2 == BDOF_MIN_BLOCK_SIZE);
-                const int16_t *src02 = src0 + dy * MAX_PB_SIZE;
-                const int16_t *src12 = src1 + dy * MAX_PB_SIZE;
+        int32x4_t sgx2_v = vdupq_n_s32(0);
+        int32x4_t sgy2_v = vdupq_n_s32(0);
+        int32x4_t sgxgy_v = vdupq_n_s32(0);
+        int32x4_t sgxdi_v = vdupq_n_s32(0);
+        int32x4_t sgydi_v = vdupq_n_s32(0);
+        for (int y2 = -1; y2 < BDOF_MIN_BLOCK_SIZE + 1; y2++) {
+            const int dy = y2 + (padTop && y2 < 0) - (padBottom && y2 == BDOF_MIN_BLOCK_SIZE);
+            const int16_t *src02 = src0 + dy * MAX_PB_SIZE;
+            const int16_t *src12 = src1 + dy * MAX_PB_SIZE;
 
-                int save[5] = {0};
-                for (int x1 = -1; x1 < BDOF_MIN_BLOCK_SIZE + 1; x1++) {
-                    const int dx = x1 + (padLeft && x1 < 0) - (padRight && x1 == BDOF_MIN_BLOCK_SIZE);
-                    const int diff = (src02[dx] >> shift2) - (src12[dx] >> shift2);
-                    const int idx1 = BDOF_BLOCK_SIZE * dy + dx;
-                    const int temph = (gh[0][idx1] + gh[1][idx1]) >> shift3;
-                    const int tempv = (gv[0][idx1] + gv[1][idx1]) >> shift3;
+            int16x8_t src0_v = vld1q_s16(src02);
+            int16x8_t src1_v = vld1q_s16(src12);
+            int16x8_t gh0_v = vld1q_s16(&gh[0][BDOF_BLOCK_SIZE * dy]);
+            int16x8_t gh1_v = vld1q_s16(&gh[1][BDOF_BLOCK_SIZE * dy]);
+            int16x8_t gv0_v = vld1q_s16(&gv[0][BDOF_BLOCK_SIZE * dy]);
+            int16x8_t gv1_v = vld1q_s16(&gv[1][BDOF_BLOCK_SIZE * dy]);
 
-                    save[0] += FFABS(temph);
-                    save[1] += FFABS(tempv);
-                    save[2] += VVC_SIGN(tempv) * temph;
-                    save[3] += -VVC_SIGN(temph) * diff;
-                    save[4] += -VVC_SIGN(tempv) * diff;
-                }
-                sgx2[0] += save[0];
-                sgy2[0] += save[1];
-                sgxgy[0] += save[2];
-                sgxdi[0] += save[3];
-                sgydi[0] += save[4];
+            src0_v = vshrq_n_s16(src0_v, 4);
+            src1_v = vshrq_n_s16(src1_v, 4);
+            // tmph
+            gh0_v = vhaddq_s16(gh0_v, gh1_v);
+            // tmpv
+            gv0_v = vhaddq_s16(gv0_v, gv1_v);
+            // diff
+            src0_v = vsubq_s16(src0_v, src1_v);
+
+            // vpaddlq_s16
+            int16x8_t abs_temph = vabsq_s16(gh0_v);
+            int16x8_t abs_tempv = vabsq_s16(gv0_v);
+            sgx2_v = vaddq_s32(sgx2_v, padding_edge(abs_temph, edge_table));
+            sgy2_v = vaddq_s32(sgy2_v, padding_edge(abs_tempv, edge_table));
+
+            int16x8_t sign_temph, sign_tempv;
+            {
+                uint16x8_t v0 = vcgtq_s16(gh0_v, vdupq_n_s16(0));
+                uint16x8_t v1 = vcltq_s16(gh0_v, vdupq_n_s16(0));
+                sign_temph = vreinterpretq_s16_u16(vsubq_u16(v1, v0));
             }
-        }
 
-        {
-            const int16_t *src0 = _src0 + y * MAX_PB_SIZE + BDOF_MIN_BLOCK_SIZE;
-            const int16_t *src1 = _src1 + y * MAX_PB_SIZE + BDOF_MIN_BLOCK_SIZE;
-            int idx = BDOF_BLOCK_SIZE * y + BDOF_MIN_BLOCK_SIZE;
-            const int16_t *gh[] = {gradient_h[0] + idx, gradient_h[1] + idx};
-            const int16_t *gv[] = {gradient_v[0] + idx, gradient_v[1] + idx};
-            const int shift2 = 4;
-            const int shift3 = 1;
-            const int padLeft = 0;
-            const int padTop = !y;
-            const int padRight = 1;
-            const int padBottom = y + BDOF_MIN_BLOCK_SIZE == block_h;
+            {
+                uint16x8_t v0 = vcgtq_s16(gv0_v, vdupq_n_s16(0));
+                uint16x8_t v1 = vcltq_s16(gv0_v, vdupq_n_s16(0));
+                sign_tempv = vreinterpretq_s16_u16(vsubq_u16(v1, v0));
+            }
 
-            for (int y2 = -1; y2 < BDOF_MIN_BLOCK_SIZE + 1; y2++) {
-                const int dy = y2 + (padTop && y2 < 0) - (padBottom && y2 == BDOF_MIN_BLOCK_SIZE);
-                const int16_t *src02 = src0 + dy * MAX_PB_SIZE;
-                const int16_t *src12 = src1 + dy * MAX_PB_SIZE;
+            {
+                int16x8_t v0 = vmulq_s16(sign_tempv, gh0_v);
+                int16x8_t v1 = vmulq_s16(sign_temph, src0_v);
+                int16x8_t v2 = vmulq_s16(sign_tempv, src0_v);
 
-                int save[5] = {0};
-                for (int x1 = -1; x1 < BDOF_MIN_BLOCK_SIZE + 1; x1++) {
-                    const int dx = x1 + (padLeft && x1 < 0) - (padRight && x1 == BDOF_MIN_BLOCK_SIZE);
-                    const int diff = (src02[dx] >> shift2) - (src12[dx] >> shift2);
-                    const int idx1 = BDOF_BLOCK_SIZE * dy + dx;
-                    const int temph = (gh[0][idx1] + gh[1][idx1]) >> shift3;
-                    const int tempv = (gv[0][idx1] + gv[1][idx1]) >> shift3;
-
-                    save[0] += FFABS(temph);
-                    save[1] += FFABS(tempv);
-                    save[2] += VVC_SIGN(tempv) * temph;
-                    save[3] += -VVC_SIGN(temph) * diff;
-                    save[4] += -VVC_SIGN(tempv) * diff;
-                }
-                sgx2[1] += save[0];
-                sgy2[1] += save[1];
-                sgxgy[1] += save[2];
-                sgxdi[1] += save[3];
-                sgydi[1] += save[4];
+                sgxgy_v = vaddq_s32(sgxgy_v, padding_edge(v0, edge_table));
+                sgxdi_v = vsubq_s32(sgxdi_v, padding_edge(v1, edge_table));
+                sgydi_v = vsubq_s32(sgydi_v, padding_edge(v2, edge_table));
             }
         }
 
