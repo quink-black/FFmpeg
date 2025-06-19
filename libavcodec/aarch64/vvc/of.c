@@ -8,13 +8,6 @@
 #define BDOF_BLOCK_SIZE         16
 #define BDOF_MIN_BLOCK_SIZE     4
 
-void ff_vvc_prof_grad_filter_8x_neon(int16_t *gradient_h,
-                                     int16_t *gradient_v,
-                                     ptrdiff_t gradient_stride,
-                                     const int16_t *_src,
-                                     ptrdiff_t src_stride,
-                                     int width, int height);
-
 static inline int32x4_t padding_edge(int16x8_t input, uint8x16_t table)
 {
     uint8x16_t v0 = vqtbl1q_u8(vreinterpretq_u8_s16(input), table);
@@ -387,51 +380,5 @@ void ff_vvc_derive_bdof_vx_vy_16x_intrinsic(const int16_t *_src0,
         v0 = vandq_s32(v0, vreinterpretq_s32_u32(mask));
         v1 = vqmovn_s32(v0);
         vst1_lane_u64(vy + y, vreinterpret_u64_s16(v1), 0);
-    }
-}
-
-void ff_vvc_apply_bdof_block_8_neon(uint8_t *dst,
-                                    ptrdiff_t dst_stride, const int16_t *src0,
-                                    const int16_t *src1,
-                                    const int16_t **gh, const int16_t **gv,
-                                    int16_t *vx, int16_t *vy);
-
-void ff_apply_bdof_intrinsic(uint8_t *_dst, ptrdiff_t _dst_stride,
-                               const int16_t *_src0, const int16_t *_src1,
-                               int block_w, int block_h)
-{
-    // +2 for pad left and right
-    int16_t gradient_buf_h[2][BDOF_BLOCK_SIZE * BDOF_BLOCK_SIZE + 2];
-    int16_t gradient_buf_v[2][BDOF_BLOCK_SIZE * BDOF_BLOCK_SIZE + 2];
-    int16_t *gradient_h[2] = {&gradient_buf_h[0][1], &gradient_buf_h[1][1]};
-    int16_t *gradient_v[2] = {&gradient_buf_v[0][1], &gradient_buf_v[1][1]};
-    ptrdiff_t dst_stride = _dst_stride;
-    uint8_t *dst = _dst;
-
-    ff_vvc_prof_grad_filter_8x_neon(gradient_h[0], gradient_v[0],
-                     BDOF_BLOCK_SIZE,
-                     _src0, MAX_PB_SIZE, block_w, block_h);
-    ff_vvc_prof_grad_filter_8x_neon(gradient_h[1], gradient_v[1],
-                     BDOF_BLOCK_SIZE,
-                     _src1, MAX_PB_SIZE, block_w, block_h);
-
-    int16_t vx[16], vy[16];
-    if (block_w == 8)
-        ff_vvc_derive_bdof_vx_vy_8x_intrinsic(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
-    else
-        ff_vvc_derive_bdof_vx_vy_16x_intrinsic(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
-    for (int y = 0; y < block_h; y += BDOF_MIN_BLOCK_SIZE) {
-        for (int x = 0; x < block_w; x += 2 * BDOF_MIN_BLOCK_SIZE) {
-            const int16_t *src0 = _src0 + y * MAX_PB_SIZE + x;
-            const int16_t *src1 = _src1 + y * MAX_PB_SIZE + x;
-            int idx = BDOF_BLOCK_SIZE * y + x;
-            const int16_t *gh[] = {gradient_h[0] + idx, gradient_h[1] + idx};
-            const int16_t *gv[] = {gradient_v[0] + idx, gradient_v[1] + idx};
-            uint8_t *dst1 = dst + x;;
-
-            int idx1 = y + x / BDOF_MIN_BLOCK_SIZE;
-            ff_vvc_apply_bdof_block_8_neon(dst1, dst_stride, src0, src1, gh, gv, vx + idx1, vy + idx1);
-        }
-        dst += BDOF_MIN_BLOCK_SIZE * dst_stride;
     }
 }
