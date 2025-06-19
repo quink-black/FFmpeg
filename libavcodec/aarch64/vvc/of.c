@@ -107,8 +107,8 @@ static inline int32x4_t padding_edge2(uint16x8_t input, uint8x16_t table)
     uint8x16_t v0 = vqtbl1q_u8(vreinterpretq_u8_u16(input), table);
     uint16x8_t v1 = vreinterpretq_u16_u8(v0);
 
-    int32x4_t low = vaddl_u16(vget_low_u16(v1), vget_low_u16(input));
-    int32x4_t high = vaddl_high_u16(v1, input);
+    int32x4_t low = vreinterpretq_s32_u32(vaddl_u16(vget_low_u16(v1), vget_low_u16(input)));
+    int32x4_t high = vreinterpretq_s32_u32(vaddl_high_u16(v1, input));
     low = vpaddq_s32(low, high);
     return low;
 }
