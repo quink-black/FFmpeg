@@ -159,7 +159,7 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
                 sgydi_v = vsubq_s32(sgydi_v, p4);
                 continue;
             }
-            const int dy = y2 - (padBottom && y2 == BDOF_MIN_BLOCK_SIZE);
+            const int dy = y2;
             const int16_t *src02 = src0 + dy * MAX_PB_SIZE;
             const int16_t *src12 = src1 + dy * MAX_PB_SIZE;
 
@@ -221,6 +221,14 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
             }
 
             if (y2 == BDOF_MIN_BLOCK_SIZE - 1) {
+                if (padBottom) {
+                    sgx2_v = vaddq_s32(sgx2_v, p0);
+                    sgy2_v = vaddq_s32(sgy2_v, p1);
+                    sgxgy_v = vaddq_s32(sgxgy_v, p2);
+                    sgxdi_v = vsubq_s32(sgxdi_v, p3);
+                    sgydi_v = vsubq_s32(sgydi_v, p4);
+                    break;
+                }
                 vst1q_s32(&line_table[0][0][0], p0);
                 vst1q_s32(&line_table[0][1][0], p1);
                 vst1q_s32(&line_table[0][2][0], p2);
