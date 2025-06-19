@@ -121,12 +121,6 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
                            6, 7, 16, 16, 16, 16, 14, 15};
     const uint8x16_t edge_table = vld1q_u8(idx);
     for (int y = 0; y < block_h; y += BDOF_MIN_BLOCK_SIZE) {
-        int sgx2[2] = {0};
-        int sgy2[2] = {0};
-        int sgxgy[2] = {0};
-        int sgxdi[2] = {0};
-        int sgydi[2] = {0};
-
         const int16_t *src0 = _src0 + y * MAX_PB_SIZE;
         const int16_t *src1 = _src1 + y * MAX_PB_SIZE;
         int idx = BDOF_BLOCK_SIZE * y;
@@ -197,17 +191,31 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
         sgxdi_v = vpaddq_s32(sgxdi_v, sgxdi_v);
         sgydi_v = vpaddq_s32(sgydi_v, sgydi_v);
 
-        vst1_s32(sgx2, vget_low_s32(sgx2_v));
-        vst1_s32(sgy2, vget_low_s32(sgy2_v));
-        vst1_s32(sgxgy, vget_low_s32(sgxgy_v));
-        vst1_s32(sgxdi, vget_low_s32(sgxdi_v));
-        vst1_s32(sgydi, vget_low_s32(sgydi_v));
+        int32x4_t min = vdupq_n_s32(-15);
+        int32x4_t max = vdupq_n_s32(15);
 
-        vx[y] = sgx2[0] > 0 ? av_clip((sgxdi[0] * (1 << 2)) >> av_log2(sgx2[0]), -thres + 1, thres - 1) : 0;
-        vy[y] = sgy2[0] > 0 ? av_clip( ((sgydi[0] * (1 << 2)) - ((vx[y] * sgxgy[0]) >> 1)) >> av_log2(sgy2[0]), -thres + 1, thres - 1) : 0;
+        int32x4_t log2_sgx2 = vsubq_s32(vclzq_s32(sgx2_v), vdupq_n_s32(31));
+        sgxdi_v = vshlq_n_s32(sgxdi_v, 2);
+        sgxdi_v = vshlq_s32(sgxdi_v, log2_sgx2);
+        sgxdi_v = vminq_s32(sgxdi_v, max);
+        sgxdi_v = vmaxq_s32(sgxdi_v, min);
+        int32x4_t mask = vcgtq_s32(sgx2_v, vdupq_n_s32(0));
+        sgxdi_v = vandq_s32(sgxdi_v, mask);
+        int16x4_t v1 = vqmovn_s32(sgxdi_v);
+        vst1_lane_s32(vx + y, vreinterpret_s32_s16(v1), 0);
 
-        vx[y + 1] = sgx2[1] > 0 ? av_clip((sgxdi[1] * (1 << 2)) >> av_log2(sgx2[1]), -thres + 1, thres - 1) : 0;
-        vy[y + 1] = sgy2[1] > 0 ? av_clip( ((sgydi[1] * (1 << 2)) - ((vx[y + 1] * sgxgy[1]) >> 1)) >> av_log2(sgy2[1]), -thres + 1, thres - 1) : 0;
+        int32x4_t log2_sgy2 = vsubq_s32(vclzq_s32(sgy2_v), vdupq_n_s32(31));
+        sgydi_v = vshlq_n_s32(sgydi_v, 2);
+        int32x4_t v0 = vmulq_s32(sgxdi_v, sgxgy_v);
+        v0 = vshrq_n_s32(v0, 1);
+        v0 = vsubq_s32(sgydi_v, v0);
+        v0 = vshlq_s32(v0, log2_sgy2);
+        v0 = vminq_s32(v0, max);
+        v0 = vmaxq_s32(v0, min);
+        mask = vcgtq_s32(sgy2_v, vdupq_n_s32(0));
+        v0 = vandq_s32(v0, mask);
+        v1 = vqmovn_s32(v0);
+        vst1_lane_s32(vy + y, vreinterpret_s32_s16(v1), 0);
     }
 }
 
