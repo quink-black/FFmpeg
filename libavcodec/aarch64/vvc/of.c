@@ -133,15 +133,25 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
         int32x4_t sgxgy_v = vdupq_n_s32(0);
         int32x4_t sgxdi_v = vdupq_n_s32(0);
         int32x4_t sgydi_v = vdupq_n_s32(0);
-        for (int y2 = -1; y2 < BDOF_MIN_BLOCK_SIZE + 1; y2++) {
+        for (int y2 = 0; y2 < BDOF_MIN_BLOCK_SIZE + 1; y2++) {
             int32x4_t p0, p1, p2, p3, p4;
 
-            if (y > 0 && y2 <= 0) {
-                p0 = vld1q_s32(&line_table[y2 + 1][0][0]);
-                p1 = vld1q_s32(&line_table[y2 + 1][1][0]);
-                p2 = vld1q_s32(&line_table[y2 + 1][2][0]);
-                p3 = vld1q_s32(&line_table[y2 + 1][3][0]);
-                p4 = vld1q_s32(&line_table[y2 + 1][4][0]);
+            if (y > 0 && y2 == 0) {
+                p0 = vld1q_s32(&line_table[0][0][0]);
+                p1 = vld1q_s32(&line_table[0][1][0]);
+                p2 = vld1q_s32(&line_table[0][2][0]);
+                p3 = vld1q_s32(&line_table[0][3][0]);
+                p4 = vld1q_s32(&line_table[0][4][0]);
+                sgx2_v = vaddq_s32(sgx2_v, p0);
+                sgy2_v = vaddq_s32(sgy2_v, p1);
+                sgxgy_v = vaddq_s32(sgxgy_v, p2);
+                sgxdi_v = vsubq_s32(sgxdi_v, p3);
+                sgydi_v = vsubq_s32(sgydi_v, p4);
+                p0 = vld1q_s32(&line_table[1][0][0]);
+                p1 = vld1q_s32(&line_table[1][1][0]);
+                p2 = vld1q_s32(&line_table[1][2][0]);
+                p3 = vld1q_s32(&line_table[1][3][0]);
+                p4 = vld1q_s32(&line_table[1][4][0]);
                 sgx2_v = vaddq_s32(sgx2_v, p0);
                 sgy2_v = vaddq_s32(sgy2_v, p1);
                 sgxgy_v = vaddq_s32(sgxgy_v, p2);
@@ -149,7 +159,7 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
                 sgydi_v = vsubq_s32(sgydi_v, p4);
                 continue;
             }
-            const int dy = y2 + (padTop && y2 < 0) - (padBottom && y2 == BDOF_MIN_BLOCK_SIZE);
+            const int dy = y2 - (padBottom && y2 == BDOF_MIN_BLOCK_SIZE);
             const int16_t *src02 = src0 + dy * MAX_PB_SIZE;
             const int16_t *src12 = src1 + dy * MAX_PB_SIZE;
 
@@ -202,6 +212,13 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
             sgxgy_v = vaddq_s32(sgxgy_v, p2);
             sgxdi_v = vsubq_s32(sgxdi_v, p3);
             sgydi_v = vsubq_s32(sgydi_v, p4);
+            if (y == 0 && y2 == 0) {
+                sgx2_v = vaddq_s32(sgx2_v, p0);
+                sgy2_v = vaddq_s32(sgy2_v, p1);
+                sgxgy_v = vaddq_s32(sgxgy_v, p2);
+                sgxdi_v = vsubq_s32(sgxdi_v, p3);
+                sgydi_v = vsubq_s32(sgydi_v, p4);
+            }
 
             if (y2 == BDOF_MIN_BLOCK_SIZE - 1) {
                 vst1q_s32(&line_table[0][0][0], p0);
