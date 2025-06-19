@@ -8,88 +8,12 @@
 #define BDOF_BLOCK_SIZE         16
 #define BDOF_MIN_BLOCK_SIZE     4
 
-static void prof_grad_filter(int16_t *gradient_h, int16_t *gradient_v,
-                             const ptrdiff_t gradient_stride,
-                             const int16_t *_src, const ptrdiff_t src_stride,
-                             const int width, const int height) {
-    const int shift = 6;
-    const int16_t *src = _src;
-
-    for (int y = 0; y < height; y++) {
-        const int16_t *p = src;
-        for (int x = 0; x < width; x++) {
-            gradient_h[x] = (p[1] >> shift) - (p[-1] >> shift);
-            gradient_v[x] = (p[src_stride] >> shift) - (p[-src_stride] >> shift);
-            p++;
-        }
-        gradient_h += gradient_stride;
-        gradient_v += gradient_stride;
-        src += src_stride;
-    }
-}
-
 void ff_vvc_prof_grad_filter_8x_neon(int16_t *gradient_h,
                                      int16_t *gradient_v,
                                      ptrdiff_t gradient_stride,
                                      const int16_t *_src,
                                      ptrdiff_t src_stride,
                                      int width, int height);
-
-#define VVC_SIGN(v) (v < 0 ? -1 : !!v)
-
-/*
-                if (y == 0) {
-                    // pad top, copy last line
-                    if (y2 == 0) {
-                        sgx2 += line_table[0][x / BDOF_MIN_BLOCK_SIZE][0];
-                        sgy2 += line_table[0][x / BDOF_MIN_BLOCK_SIZE][1];
-                        sgxgy += line_table[0][x / BDOF_MIN_BLOCK_SIZE][2];
-                        sgxdi += line_table[0][x / BDOF_MIN_BLOCK_SIZE][3];
-                        sgydi += line_table[0][x / BDOF_MIN_BLOCK_SIZE][4];
-                        continue;
-                    }
-                } else if (y > 0) {
-                    if (y2 == -1) {
-                        sgx2 += line_table[0][x / BDOF_MIN_BLOCK_SIZE][0];
-                        sgy2 += line_table[0][x / BDOF_MIN_BLOCK_SIZE][1];
-                        sgxgy += line_table[0][x / BDOF_MIN_BLOCK_SIZE][2];
-                        sgxdi += line_table[0][x / BDOF_MIN_BLOCK_SIZE][3];
-                        sgydi += line_table[0][x / BDOF_MIN_BLOCK_SIZE][4];
-                        continue;
-                    } else if (y2 == 0) {
-                        sgx2 += line_table[1][x / BDOF_MIN_BLOCK_SIZE][0];
-                        sgy2 += line_table[1][x / BDOF_MIN_BLOCK_SIZE][1];
-                        sgxgy += line_table[1][x / BDOF_MIN_BLOCK_SIZE][2];
-                        sgxdi += line_table[1][x / BDOF_MIN_BLOCK_SIZE][3];
-                        sgydi += line_table[1][x / BDOF_MIN_BLOCK_SIZE][4];
-                        continue;
-                    }
-
-                    // pad bottom, copy last line
-                    if (y + BDOF_MIN_BLOCK_SIZE == block_h && y2 == BDOF_MIN_BLOCK_SIZE) {
-                        sgx2 += line_table[0][x / BDOF_MIN_BLOCK_SIZE][0];
-                        sgy2 += line_table[0][x / BDOF_MIN_BLOCK_SIZE][1];
-                        sgxgy += line_table[0][x / BDOF_MIN_BLOCK_SIZE][2];
-                        sgxdi += line_table[0][x / BDOF_MIN_BLOCK_SIZE][3];
-                        sgydi += line_table[0][x / BDOF_MIN_BLOCK_SIZE][4];
-                        break;
-                    }
-                }
-
-                if (y2 == BDOF_MIN_BLOCK_SIZE - 1 || (y == 0 && y2 == -1)) {
-                    line_table[0][x / BDOF_MIN_BLOCK_SIZE][0] = save[0];
-                    line_table[0][x / BDOF_MIN_BLOCK_SIZE][1] = save[1];
-                    line_table[0][x / BDOF_MIN_BLOCK_SIZE][2] = save[2];
-                    line_table[0][x / BDOF_MIN_BLOCK_SIZE][3] = save[3];
-                    line_table[0][x / BDOF_MIN_BLOCK_SIZE][4] = save[4];
-                } else if (y2 == BDOF_MIN_BLOCK_SIZE) {
-                    line_table[1][x / BDOF_MIN_BLOCK_SIZE][0] = save[0];
-                    line_table[1][x / BDOF_MIN_BLOCK_SIZE][1] = save[1];
-                    line_table[1][x / BDOF_MIN_BLOCK_SIZE][2] = save[2];
-                    line_table[1][x / BDOF_MIN_BLOCK_SIZE][3] = save[3];
-                    line_table[1][x / BDOF_MIN_BLOCK_SIZE][4] = save[4];
-                }
- */
 
 static inline int32x4_t padding_edge(int16x8_t input, uint8x16_t table)
 {
@@ -125,7 +49,7 @@ static inline int32x4_t padding_edge16(int16x8x2_t input, uint8x16x2_t table)
     return low;
 }
 
-static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1, int16_t *gradient_h[2], int16_t *gradient_v[2], int16_t vx[16], int16_t vy[16], int block_h)
+void ff_vvc_derive_bdof_vx_vy_8x_intrinsic(const int16_t *_src0, const int16_t *_src1, int16_t *gradient_h[2], int16_t *gradient_v[2], int16_t vx[16], int16_t vy[16], int block_h)
 {
     int line_table[2][5][4] = {0};
     const uint8_t idx[] = {0, 1, 16, 16, 16, 16, 8, 9,
@@ -288,7 +212,12 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
     }
 }
 
-static void vvc_derive_bdof_vx_vy_16x(const int16_t *_src0, const int16_t *_src1, int16_t *gradient_h[2], int16_t *gradient_v[2], int16_t vx[16], int16_t vy[16], int block_h)
+void ff_vvc_derive_bdof_vx_vy_16x_intrinsic(const int16_t *_src0,
+                                            const int16_t *_src1,
+                                            int16_t *gradient_h[2],
+                                            int16_t *gradient_v[2],
+                                            int16_t vx[16], int16_t vy[16],
+                                            int block_h)
 {
     int line_table[2][5][4] = {0};
     const uint8_t idx[] = {0,  1,  64, 64, 64, 64, 8,  9,
@@ -488,9 +417,9 @@ void ff_apply_bdof_intrinsic(uint8_t *_dst, ptrdiff_t _dst_stride,
 
     int16_t vx[16], vy[16];
     if (block_w == 8)
-        vvc_derive_bdof_vx_vy_8x(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
+        ff_vvc_derive_bdof_vx_vy_8x_intrinsic(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
     else
-        vvc_derive_bdof_vx_vy_16x(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
+        ff_vvc_derive_bdof_vx_vy_16x_intrinsic(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
     for (int y = 0; y < block_h; y += BDOF_MIN_BLOCK_SIZE) {
         for (int x = 0; x < block_w; x += 2 * BDOF_MIN_BLOCK_SIZE) {
             const int16_t *src0 = _src0 + y * MAX_PB_SIZE + x;
