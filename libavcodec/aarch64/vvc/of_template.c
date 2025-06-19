@@ -43,7 +43,7 @@ static void FUNC(apply_bdof)(uint8_t *_dst, ptrdiff_t _dst_stride,
                                     _src1, MAX_PB_SIZE, block_w, block_h);
     int16_t vx[16], vy[16];
     if (block_w == 8)
-        ff_vvc_derive_bdof_vx_vy_8x_intrinsic(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
+        ff_vvc_derive_bdof_vx_vy_8x_neon(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
     else
         ff_vvc_derive_bdof_vx_vy_16x_intrinsic(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
 
