@@ -102,13 +102,21 @@ static inline int32x4_t padding_edge(int16x8_t input, uint8x16_t table)
     return low;
 }
 
+static inline int32x4_t padding_edge2(uint16x8_t input, uint8x16_t table)
+{
+    uint8x16_t v0 = vqtbl1q_u8(vreinterpretq_u8_u16(input), table);
+    uint16x8_t v1 = vreinterpretq_u16_u8(v0);
+
+    int32x4_t low = vaddl_u16(vget_low_u16(v1), vget_low_u16(input));
+    int32x4_t high = vaddl_high_u16(v1, input);
+    low = vpaddq_s32(low, high);
+    return low;
+}
+
 static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1, int16_t *gradient_h[2], int16_t *gradient_v[2], int16_t vx[16], int16_t vy[16], int block_h)
 {
     int line_table[2][4][5] = {0};
     const int thres = 1 << 4;
-    const int shift2 = 4;
-    const int shift3 = 1;
-
     const uint8_t idx[] = {0, 1, 16, 16, 16, 16, 8, 9,
                            6, 7, 16, 16, 16, 16, 14, 15};
     const uint8x16_t edge_table = vld1q_u8(idx);
@@ -124,9 +132,7 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
         int idx = BDOF_BLOCK_SIZE * y;
         const int16_t *gh[] = {gradient_h[0] + idx, gradient_h[1] + idx};
         const int16_t *gv[] = {gradient_v[0] + idx, gradient_v[1] + idx};
-        const int padLeft = 1;
         const int padTop = !y;
-        const int padRight = 0;
         const int padBottom = y + BDOF_MIN_BLOCK_SIZE == block_h;
 
         int32x4_t sgx2_v = vdupq_n_s32(0);
@@ -156,10 +162,10 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
             src0_v = vsubq_s16(src0_v, src1_v);
 
             // vpaddlq_s16
-            int16x8_t abs_temph = vabsq_s16(gh0_v);
-            int16x8_t abs_tempv = vabsq_s16(gv0_v);
-            sgx2_v = vaddq_s32(sgx2_v, padding_edge(abs_temph, edge_table));
-            sgy2_v = vaddq_s32(sgy2_v, padding_edge(abs_tempv, edge_table));
+            uint16x8_t abs_temph = vreinterpretq_u16_s16(vabsq_s16(gh0_v));
+            uint16x8_t abs_tempv = vreinterpretq_u16_s16(vabsq_s16(gv0_v));
+            sgx2_v = vaddq_s32(sgx2_v, padding_edge2(abs_temph, edge_table));
+            sgy2_v = vaddq_s32(sgy2_v, padding_edge2(abs_tempv, edge_table));
 
             int16x8_t sign_temph, sign_tempv;
             {
@@ -184,6 +190,18 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
                 sgydi_v = vsubq_s32(sgydi_v, padding_edge(v2, edge_table));
             }
         }
+
+        sgx2_v = vpaddq_s32(sgx2_v, sgx2_v);
+        sgy2_v = vpaddq_s32(sgy2_v, sgy2_v);
+        sgxgy_v = vpaddq_s32(sgxgy_v, sgxgy_v);
+        sgxdi_v = vpaddq_s32(sgxdi_v, sgxdi_v);
+        sgydi_v = vpaddq_s32(sgydi_v, sgydi_v);
+
+        vst1_s32(sgx2, vget_low_s32(sgx2_v));
+        vst1_s32(sgy2, vget_low_s32(sgy2_v));
+        vst1_s32(sgxgy, vget_low_s32(sgxgy_v));
+        vst1_s32(sgxdi, vget_low_s32(sgxdi_v));
+        vst1_s32(sgydi, vget_low_s32(sgydi_v));
 
         vx[y] = sgx2[0] > 0 ? av_clip((sgxdi[0] * (1 << 2)) >> av_log2(sgx2[0]), -thres + 1, thres - 1) : 0;
         vy[y] = sgy2[0] > 0 ? av_clip( ((sgydi[0] * (1 << 2)) - ((vx[y] * sgxgy[0]) >> 1)) >> av_log2(sgy2[0]), -thres + 1, thres - 1) : 0;
