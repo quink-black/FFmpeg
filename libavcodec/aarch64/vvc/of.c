@@ -199,8 +199,8 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
         sgxdi_v = vshlq_s32(sgxdi_v, log2_sgx2);
         sgxdi_v = vminq_s32(sgxdi_v, max);
         sgxdi_v = vmaxq_s32(sgxdi_v, min);
-        int32x4_t mask = vcgtq_s32(sgx2_v, vdupq_n_s32(0));
-        sgxdi_v = vandq_s32(sgxdi_v, mask);
+        uint32x4_t mask = vcgtq_s32(sgx2_v, vdupq_n_s32(0));
+        sgxdi_v = vandq_s32(sgxdi_v, vreinterpretq_s32_u32(mask));
         int16x4_t v1 = vqmovn_s32(sgxdi_v);
         vst1_lane_s32(vx + y, vreinterpret_s32_s16(v1), 0);
 
@@ -213,7 +213,7 @@ static void vvc_derive_bdof_vx_vy_8x(const int16_t *_src0, const int16_t *_src1,
         v0 = vminq_s32(v0, max);
         v0 = vmaxq_s32(v0, min);
         mask = vcgtq_s32(sgy2_v, vdupq_n_s32(0));
-        v0 = vandq_s32(v0, mask);
+        v0 = vandq_s32(v0, vreinterpretq_s32_u32(mask));
         v1 = vqmovn_s32(v0);
         vst1_lane_s32(vy + y, vreinterpret_s32_s16(v1), 0);
     }
