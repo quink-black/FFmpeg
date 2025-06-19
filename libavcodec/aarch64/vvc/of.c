@@ -44,49 +44,39 @@ static inline int32x4_t padding_edge16(int16x8x2_t input, uint8x16x2_t table)
 
 void ff_vvc_derive_bdof_vx_vy_8x_intrinsic(const int16_t *_src0, const int16_t *_src1, int16_t *gradient_h[2], int16_t *gradient_v[2], int16_t vx[16], int16_t vy[16], int block_h)
 {
-    int line_table[2][5][4] = {0};
-    const uint8_t idx[] = {0, 1, 16, 16, 16, 16, 8, 9,
-                           6, 7, 16, 16, 16, 16, 14, 15};
-    const uint8x16_t edge_table = vld1q_u8(idx);
     int16_t *gh0 = gradient_h[0];
     int16_t *gh1 = gradient_h[1];
     int16_t *gv0 = gradient_v[0];
     int16_t *gv1 = gradient_v[1];
+    const uint8_t idx[] = {0, 1, 16, 16, 16, 16, 8, 9,
+                           6, 7, 16, 16, 16, 16, 14, 15};
+    const uint8x16_t edge_table = vld1q_u8(idx);
+    const int32x4_t min = vdupq_n_s32(-15);
+    const int32x4_t max = vdupq_n_s32(15);
+    int32x4_t m0, m1, m2, m3, m4;
+    int32x4_t n0, n1, n2, n3, n4;
     for (size_t y = block_h; y > 0; y -= BDOF_MIN_BLOCK_SIZE) {
-        const int padBottom = y == BDOF_MIN_BLOCK_SIZE;
-
         int32x4_t sgx2_v = vdupq_n_s32(0);
         int32x4_t sgy2_v = vdupq_n_s32(0);
         int32x4_t sgxgy_v = vdupq_n_s32(0);
         int32x4_t sgxdi_v = vdupq_n_s32(0);
         int32x4_t sgydi_v = vdupq_n_s32(0);
         for (size_t y2 = 0; y2 < BDOF_MIN_BLOCK_SIZE + 1; y2++) {
-            int32x4_t p0, p1, p2, p3, p4;
-
             if (y < block_h && y2 == 0) {
-                p0 = vld1q_s32(&line_table[0][0][0]);
-                p1 = vld1q_s32(&line_table[0][1][0]);
-                p2 = vld1q_s32(&line_table[0][2][0]);
-                p3 = vld1q_s32(&line_table[0][3][0]);
-                p4 = vld1q_s32(&line_table[0][4][0]);
-                sgx2_v = vaddq_s32(sgx2_v, p0);
-                sgy2_v = vaddq_s32(sgy2_v, p1);
-                sgxgy_v = vaddq_s32(sgxgy_v, p2);
-                sgxdi_v = vsubq_s32(sgxdi_v, p3);
-                sgydi_v = vsubq_s32(sgydi_v, p4);
-                p0 = vld1q_s32(&line_table[1][0][0]);
-                p1 = vld1q_s32(&line_table[1][1][0]);
-                p2 = vld1q_s32(&line_table[1][2][0]);
-                p3 = vld1q_s32(&line_table[1][3][0]);
-                p4 = vld1q_s32(&line_table[1][4][0]);
-                sgx2_v = vaddq_s32(sgx2_v, p0);
-                sgy2_v = vaddq_s32(sgy2_v, p1);
-                sgxgy_v = vaddq_s32(sgxgy_v, p2);
-                sgxdi_v = vsubq_s32(sgxdi_v, p3);
-                sgydi_v = vsubq_s32(sgydi_v, p4);
+                sgx2_v = vaddq_s32(sgx2_v, m0);
+                sgy2_v = vaddq_s32(sgy2_v, m1);
+                sgxgy_v = vaddq_s32(sgxgy_v, m2);
+                sgxdi_v = vsubq_s32(sgxdi_v, m3);
+                sgydi_v = vsubq_s32(sgydi_v, m4);
+                sgx2_v = vaddq_s32(sgx2_v, n0);
+                sgy2_v = vaddq_s32(sgy2_v, n1);
+                sgxgy_v = vaddq_s32(sgxgy_v, n2);
+                sgxdi_v = vsubq_s32(sgxdi_v, n3);
+                sgydi_v = vsubq_s32(sgydi_v, n4);
                 continue;
             }
 
+            int32x4_t p0, p1, p2, p3, p4;
             int16x8_t src0_v = vld1q_s16(_src0);
             int16x8_t src1_v = vld1q_s16(_src1);
             int16x8_t gh0_v = vld1q_s16(gh0);
@@ -152,7 +142,7 @@ void ff_vvc_derive_bdof_vx_vy_8x_intrinsic(const int16_t *_src0, const int16_t *
             }
 
             if (y2 == BDOF_MIN_BLOCK_SIZE - 1) {
-                if (padBottom) {
+                if (y == BDOF_MIN_BLOCK_SIZE) {
                     sgx2_v = vaddq_s32(sgx2_v, p0);
                     sgy2_v = vaddq_s32(sgy2_v, p1);
                     sgxgy_v = vaddq_s32(sgxgy_v, p2);
@@ -160,17 +150,17 @@ void ff_vvc_derive_bdof_vx_vy_8x_intrinsic(const int16_t *_src0, const int16_t *
                     sgydi_v = vsubq_s32(sgydi_v, p4);
                     break;
                 }
-                vst1q_s32(&line_table[0][0][0], p0);
-                vst1q_s32(&line_table[0][1][0], p1);
-                vst1q_s32(&line_table[0][2][0], p2);
-                vst1q_s32(&line_table[0][3][0], p3);
-                vst1q_s32(&line_table[0][4][0], p4);
+                m0 = p0;
+                m1 = p1;
+                m2 = p2;
+                m3 = p3;
+                m4 = p4;
             } else if (y2 == BDOF_MIN_BLOCK_SIZE) {
-                vst1q_s32(&line_table[1][0][0], p0);
-                vst1q_s32(&line_table[1][1][0], p1);
-                vst1q_s32(&line_table[1][2][0], p2);
-                vst1q_s32(&line_table[1][3][0], p3);
-                vst1q_s32(&line_table[1][4][0], p4);
+                n0 = p0;
+                n1 = p1;
+                n2 = p2;
+                n3 = p3;
+                n4 = p4;
             }
         }
 
@@ -179,9 +169,6 @@ void ff_vvc_derive_bdof_vx_vy_8x_intrinsic(const int16_t *_src0, const int16_t *
         sgxgy_v = vpaddq_s32(sgxgy_v, sgxgy_v);
         sgxdi_v = vpaddq_s32(sgxdi_v, sgxdi_v);
         sgydi_v = vpaddq_s32(sgydi_v, sgydi_v);
-
-        int32x4_t min = vdupq_n_s32(-15);
-        int32x4_t max = vdupq_n_s32(15);
 
         int32x4_t log2_sgx2 = vsubq_s32(vclzq_s32(sgx2_v), vdupq_n_s32(31));
         sgxdi_v = vshlq_n_s32(sgxdi_v, 2);
