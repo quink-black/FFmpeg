@@ -864,15 +864,13 @@ endconst
 
 .macro bdof_vx_vy_16x_padding_left_right src0, src1, tmp0, tmp1, tmp2, dst
         tbl             \tmp0\().16b, {\src0\().16b, \src1\().16b}, v0.16b
+        tbl             v2.16b, {\src0\().16b, \src1\().16b}, v1.16b
         saddl           \tmp1\().4s, \tmp0\().4h, \src0\().4h
+        saddl           \tmp2\().4s, v2.4h, \src1\().4h
         saddl2          \tmp0\().4s, \tmp0\().8h, \src0\().8h
+        saddl2          \dst\().4s, v2.8h, \src1\().8h
         addp            \tmp0\().4s, \tmp1\().4s, \tmp0\().4s
-
-        tbl             \tmp1\().16b, {\src0\().16b, \src1\().16b}, v1.16b
-        saddl           \tmp2\().4s, \tmp1\().4h, \src1\().4h
-        saddl2          \dst\().4s, \tmp1\().8h, \src1\().8h
         addp            \dst\().4s, \tmp2\().4s, \dst\().4s
-
         addp            \dst\().4s, \tmp0\().4s, \dst\().4s
 .endm
 
@@ -919,6 +917,8 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         sqxtn	        v26.4h, v25.4s
         st1             {v26.s}[0], [x4], x11
 
+        subs            x12, x12, #(BDOF_MIN_BLOCK_SIZE)
+
         addp            v23.4s, v23.4s, v23.4s
         addp            v24.4s, v24.4s, v24.4s
         clz             v26.4s, v27.4s
@@ -934,7 +934,7 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         and             v23.16b, v23.16b, v24.16b
         sqxtn           v23.4h, v23.4s
         st1             {v23.s}[0], [x5], x11
-        subs            x12, x12, #0x4
+
         b.eq            16f
 4:
         mov             x15, #0x0                           // dy, inner loop
@@ -1067,6 +1067,8 @@ function ff_vvc_derive_bdof_vx_vy_16x_neon, export=1
         sqxtn           v4.4h, v3.4s
         st1             {v4.d}[0], [x4], #(BDOF_MIN_BLOCK_SIZE * 2)
 
+        subs            x13, x13, #(BDOF_MIN_BLOCK_SIZE)    // y -= BDOF_MIN_BLOCK_SIZE
+
         clz             v4.4s, v24.4s
         add             v4.4s, v4.4s, v5.4s                 // -log2()
         shl             v5.4s, v27.4s, #0x2
@@ -1080,9 +1082,7 @@ function ff_vvc_derive_bdof_vx_vy_16x_neon, export=1
         and             v3.16b, v3.16b, v4.16b
         sqxtn           v3.4h, v3.4s
         st1             {v3.d}[0], [x5], #(BDOF_MIN_BLOCK_SIZE * 2)
-        subs            x13, x13, #BDOF_MIN_BLOCK_SIZE      // y -= BDOF_MIN_BLOCK_SIZE
         b.eq	        16f
-
 4:
         mov             w14, #0x0                           // dy, inner loop
 
