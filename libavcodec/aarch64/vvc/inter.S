@@ -840,6 +840,12 @@ endconst
         addp            \dst\().4s, \tmp1\().4s, \dst\().4s
 .endm
 
+.macro bdof_vx_vy_sign src, tmp0, tmp1, dst
+         cmlt            \tmp0\().8h, \src\().8h, #0
+         cmgt            \tmp1\().8h, \src\().8h, #0
+         sub             \dst\().8h, \tmp0\().8h, \tmp1\().8h
+.endm
+
 /*
  * x0: const int16_t *_src0,
  * x1: const int16_t *_src1,
@@ -857,7 +863,6 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         ldp             x10, x9, [x3]                       // gv0, gv1
         movrel          x11, bdof_vx_vy_8x_tbl
         ldr             q0, [x11]                           // table
-        movi            v1.8h, #1                           // for sign
         mvni            v2.4s, #30                          // -31, for log2
         movi            v3.4s, #15                          // clip to 15
         mvni            v4.4s, #14                          // clip to -15
@@ -943,15 +948,8 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         bdof_vx_vy_8x_padding_left_right v28, v9, v10, v28
         bdof_vx_vy_8x_padding_left_right v29, v9, v10, v29
 
-        cmlt            v9.8h, v30.8h, #0
-        cmeq            v10.8h, v30.8h, #0
-        bic             v10.16b, v1.16b, v10.16b
-        orr             v9.16b, v9.16b, v10.16b
-
-        cmlt	        v10.8h, v31.8h, #0
-        cmeq	        v31.8h, v31.8h, #0
-        bic             v31.16b, v1.16b, v31.16b
-        orr             v31.16b, v10.16b, v31.16b
+        bdof_vx_vy_sign v30, v9, v10, v9
+        bdof_vx_vy_sign v31, v10, v31, v31
 
         mul             v30.8h, v31.8h, v30.8h
         mul             v9.8h, v9.8h, v8.8h
