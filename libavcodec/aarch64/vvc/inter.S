@@ -816,6 +816,30 @@ const bdof_vx_vy_16x_tbl
         .byte 22, 23, 64, 64, 64, 64, 30, 31
 endconst
 
+// line(-1), line0, line1, line2, line3, line4
+.macro bdof_vx_vy_8x_save_line tmp0, tmp1, tmp2, tmp3, tmp4
+        mov             \tmp0\().16b, v28.16b
+        mov             \tmp1\().16b, v29.16b
+        mov             \tmp2\().16b, v30.16b
+        mov             \tmp3\().16b, v31.16b
+        mov             \tmp4\().16b, v8.16b
+.endm
+
+.macro bdof_vx_vy_8x_add_line tmp0, tmp1, tmp2, tmp3, tmp4
+        add	            v25.4s, v25.4s, \tmp0\().4s
+        add            	v27.4s, v27.4s, \tmp1\().4s
+        add            	v23.4s, v23.4s, \tmp2\().4s
+        sub            	v26.4s, v26.4s, \tmp3\().4s
+        sub             v24.4s, v24.4s, \tmp4\().4s
+.endm
+
+.macro bdof_vx_vy_8x_padding_left_right src, tmp0, tmp1, dst
+        tbl             \tmp0\().16b, { \src\().16b }, v0.16b
+        saddl           \tmp1\().4s, \tmp0\().4h, \src\().4h
+        saddl2          \dst\().4s, \tmp0\().8h, \src\().8h
+        addp            \dst\().4s, \tmp1\().4s, \dst\().4s
+.endm
+
 /*
  * x0: const int16_t *_src0,
  * x1: const int16_t *_src1,
@@ -843,13 +867,8 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         b               4f
 
 1:
-        // save results when dy == BDOF_MIN_BLOCK_SIZE
-        mov             v5.16b, v28.16b
-        mov             v6.16b, v29.16b
-        mov             v7.16b, v30.16b
-        mov             v16.16b, v31.16b
-        mov             v17.16b, v8.16b
-
+        // save line4 results
+        bdof_vx_vy_8x_save_line v5, v6, v7, v16, v17
 2:
         addp            v25.4s, v25.4s, v25.4s
         addp            v27.4s, v27.4s, v27.4s
@@ -894,22 +913,9 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
 
 5:
         // add line(-1) and line0 from previous results
-        add             v25.4s, v25.4s, v5.4s
-        add             v25.4s, v25.4s, v18.4s
-
-        add             v27.4s, v27.4s, v6.4s
-        add             v27.4s, v27.4s, v19.4s
-
-        add             v23.4s, v23.4s, v7.4s
-        add             v23.4s, v23.4s, v20.4s
-
-        add             v28.4s, v16.4s, v21.4s
-        sub             v26.4s, v26.4s, v28.4s
-
-        add             v28.4s, v17.4s, v22.4s
-        sub         	v24.4s, v24.4s, v28.4s
+        bdof_vx_vy_8x_add_line v18, v19, v20, v21, v22
+        bdof_vx_vy_8x_add_line v5, v6, v7, v16, v17
         add             x15, x15, #1
-
 8:
         cmp             w12, w6
         b.hs            9f
@@ -934,15 +940,8 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         abs             v28.8h, v30.8h
         abs             v29.8h, v31.8h
 
-        tbl             v9.16b, { v28.16b }, v0.16b
-        saddl           v10.4s, v9.4h, v28.4h
-        saddl2          v28.4s, v9.8h, v28.8h
-        addp            v28.4s, v10.4s, v28.4s
-
-        tbl             v9.16b, { v29.16b }, v0.16b
-        saddl           v10.4s, v9.4h, v29.4h
-        saddl2          v29.4s, v9.8h, v29.8h
-        addp            v29.4s, v10.4s, v29.4s
+        bdof_vx_vy_8x_padding_left_right v28, v9, v10, v28
+        bdof_vx_vy_8x_padding_left_right v29, v9, v10, v29
 
         cmlt            v9.8h, v30.8h, #0
         cmeq            v10.8h, v30.8h, #0
@@ -958,41 +957,20 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         mul             v9.8h, v9.8h, v8.8h
         mul             v8.8h, v31.8h, v8.8h
 
-        tbl             v31.16b, { v30.16b }, v0.16b
-        saddl           v10.4s, v31.4h, v30.4h
-        saddl2          v30.4s, v31.8h, v30.8h
-        addp            v30.4s, v10.4s, v30.4s
+        bdof_vx_vy_8x_padding_left_right v30, v31, v10, v30
+        bdof_vx_vy_8x_padding_left_right v9, v31, v10, v31
+        bdof_vx_vy_8x_padding_left_right v8, v9, v10, v8
 
-        tbl             v31.16b, { v9.16b }, v0.16b
-        saddl	        v10.4s, v31.4h, v9.4h
-        saddl2          v31.4s, v31.8h, v9.8h
-        addp            v31.4s, v10.4s, v31.4s
-
-        tbl             v9.16b, { v8.16b }, v0.16b
-        saddl           v10.4s, v9.4h, v8.4h
-        saddl2          v8.4s, v9.8h, v8.8h
-        addp            v8.4s, v10.4s, v8.4s
-
-        add	            v25.4s, v28.4s, v25.4s
-        add            	v27.4s, v29.4s, v27.4s
-        add            	v23.4s, v30.4s, v23.4s
-
-        sub            	v26.4s, v26.4s, v31.4s
-        sub             v24.4s, v24.4s, v8.4s
+        bdof_vx_vy_8x_add_line v28, v29, v30, v31, v8
 
         cmp             w12, w6
         b.ne            10f
         cbnz            x15, 10f
 
         // y == block_h && dy == 0, duplicate first line results
-        add	            v25.4s, v28.4s, v25.4s
-        add            	v27.4s, v29.4s, v27.4s
-        add            	v23.4s, v30.4s, v23.4s
-
-        sub            	v26.4s, v26.4s, v31.4s
-        sub             v24.4s, v24.4s, v8.4s
+        bdof_vx_vy_8x_add_line v28, v29, v30, v31, v8
         add             x15, x15, #0x1
-        b               8b
+        b               9b
 10:
         cmp             x15, #(BDOF_MIN_BLOCK_SIZE - 1)
         b.eq            11f
@@ -1004,22 +982,14 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         // duplicate the results and break
         cmp             x12, #(BDOF_MIN_BLOCK_SIZE)
         b.eq            13f
-        mov             v18.16b, v28.16b
-        mov             v19.16b, v29.16b
-        mov             v20.16b, v30.16b
-        mov             v21.16b, v31.16b
-        mov             v22.16b, v8.16b
+        bdof_vx_vy_8x_save_line v18, v19, v20, v21, v22
 12:
         add             x15, x15, #1
         b               8b
 13:
         // y == BDOF_MIN_BLOCK_SIZE && dy == BDOF_MIN_BLOCK_SIZE - 1
-        add	            v25.4s, v28.4s, v25.4s
-        add            	v27.4s, v29.4s, v27.4s
-        add            	v23.4s, v30.4s, v23.4s
-
-        sub            	v26.4s, v26.4s, v31.4s
-        sub             v24.4s, v24.4s, v8.4s
+        // padding bottom then break
+        bdof_vx_vy_8x_add_line v28, v29, v30, v31, v8
         b               2b
 16:
         ldp             d9, d8, [sp, #0x10]
@@ -1253,8 +1223,7 @@ function ff_vvc_derive_bdof_vx_vy_16x_neon, export=1
         sub     	    v28.4s, v28.4s, v8.4s
         sub     	    v27.4s, v27.4s, v9.4s
         add             w14, w14, #0x1
-        // TODO: jump to 9
-        b	            8b
+        b	            9b
 10:
         cmp             w14, #(BDOF_MIN_BLOCK_SIZE - 1)
         b.eq	        11f
