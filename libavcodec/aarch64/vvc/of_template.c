@@ -45,7 +45,7 @@ static void FUNC(apply_bdof)(uint8_t *_dst, ptrdiff_t _dst_stride,
     if (block_w == 8)
         ff_vvc_derive_bdof_vx_vy_8x_neon(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
     else
-        ff_vvc_derive_bdof_vx_vy_16x_intrinsic(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
+        ff_vvc_derive_bdof_vx_vy_16x_neon(_src0, _src1, gradient_h, gradient_v, vx, vy, block_h);
 
     for (int y = 0; y < block_h; y += BDOF_MIN_BLOCK_SIZE) {
         for (int x = 0; x < block_w; x += BDOF_MIN_BLOCK_SIZE * 2) {

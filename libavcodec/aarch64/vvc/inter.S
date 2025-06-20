@@ -809,6 +809,13 @@ const bdof_vx_vy_8x_tbl
         .byte 6, 7, 16, 16, 16, 16, 14, 15
 endconst
 
+const bdof_vx_vy_16x_tbl
+        .byte 0,  1,  64, 64, 64, 64, 8,  9
+        .byte 6,  7,  64, 64, 64, 64, 16, 17
+        .byte 14, 15, 64, 64, 64, 64, 24, 25
+        .byte 22, 23, 64, 64, 64, 64, 30, 31
+endconst
+
 /*
  * x0: const int16_t *_src0,
  * x1: const int16_t *_src1,
@@ -886,6 +893,7 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         b               8f
 
 5:
+        // add line(-1) and line0 from previous results
         add             v25.4s, v25.4s, v5.4s
         add             v25.4s, v25.4s, v18.4s
 
@@ -1016,5 +1024,274 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
 16:
         ldp             d9, d8, [sp, #0x10]
         ldp             d11, d10, [sp], #0x20
+        ret
+endfunc
+
+/*
+ * x0: const int16_t *_src0,
+ * x1: const int16_t *_src1,
+ * x2: int16_t *gradient_h[2],
+ * x3: int16_t *gradient_v[2],
+ * x4: int16_t vx[16],
+ * x5: int16_t vy[16],
+ * w6: int block_h
+ */
+function ff_vvc_derive_bdof_vx_vy_16x_neon, export=1
+        sub             sp, sp, #0x80
+        stp             d15, d14, [sp, #0x30]
+        stp             d13, d12, [sp, #0x40]
+        stp             d11, d10, [sp, #0x50]
+        stp             d9, d8,   [sp, #0x60]
+        stp             x29, x30, [sp, #0x70]
+
+        ldp             x8, x9, [x2]                        // gh0, gh1
+        ldp             x10, x11, [x3]                      // gv0, gv1
+        movrel          x12, bdof_vx_vy_16x_tbl
+        ldp             q0, q1, [x12]                       // table
+        movi            v2.8h, #1
+        mov             w13, w6                             // y = block_h
+        b               4f
+
+1:
+        // save line4
+        mov         	v18.16b, v9.16b
+        mov             v17.16b, v8.16b
+        mov         	v16.16b, v31.16b
+        mov         	v7.16b, v30.16b
+        mov         	v6.16b, v29.16b
+
+2:
+        clz             v3.4s, v25.4s
+        mvni            v5.4s, #0x1e
+        add             v3.4s, v3.4s, v5.4s                 // -log2()
+        shl             v4.4s, v28.4s, #0x2
+        sshl            v3.4s, v4.4s, v3.4s
+        movi            v28.4s, #0xf                        // clip to 15
+        smin            v3.4s, v3.4s, v28.4s
+        mvni        	v29.4s, #0xe                        // clip to -15
+        smax        	v3.4s, v3.4s, v29.4s
+        cmgt            v4.4s, v25.4s, #0
+        and             v3.16b, v3.16b, v4.16b
+        sqxtn           v4.4h, v3.4s
+        st1             {v4.d}[0], [x4], #(BDOF_MIN_BLOCK_SIZE * 2)
+
+        clz             v4.4s, v24.4s
+        add             v4.4s, v4.4s, v5.4s                 // -log2()
+        shl             v5.4s, v27.4s, #0x2
+        mul             v3.4s, v3.4s, v26.4s
+        sshr            v3.4s, v3.4s, #0x1
+        sub             v3.4s, v5.4s, v3.4s
+        sshl        	v3.4s, v3.4s, v4.4s
+        smin            v3.4s, v3.4s, v28.4s
+        smax        	v3.4s, v3.4s, v29.4s
+        cmgt            v4.4s, v24.4s, #0
+        and             v3.16b, v3.16b, v4.16b
+        sqxtn           v3.4h, v3.4s
+        st1             {v3.d}[0], [x5], #(BDOF_MIN_BLOCK_SIZE * 2)
+        subs            x13, x13, #BDOF_MIN_BLOCK_SIZE      // y -= BDOF_MIN_BLOCK_SIZE
+        b.eq	        16f
+
+4:
+        mov             w14, #0x0                           // dy, inner loop
+
+        movi            v25.2d, #0
+        movi            v24.2d, #0
+        movi            v26.2d, #0
+        movi            v28.2d, #0
+        movi            v27.2d, #0
+        b               8f
+
+5:
+        // add line(-1) and line0 from previous results
+      	add             v25.4s, v6.4s, v25.4s
+      	add             v25.4s, v25.4s, v19.4s
+
+      	add             v24.4s, v7.4s, v24.4s
+      	add             v24.4s, v24.4s, v20.4s
+
+      	add             v26.4s, v16.4s, v26.4s
+      	add             v26.4s, v26.4s, v21.4s
+
+      	add             v29.4s, v17.4s, v22.4s
+      	sub             v28.4s, v28.4s, v29.4s
+
+      	add             v29.4s, v18.4s, v23.4s
+      	sub             v27.4s, v27.4s, v29.4s
+
+      	add             w14, w14, #0x1
+
+ 8:
+        cmp             w13, w6
+        b.hs            9f
+        // y < block_h && dy == 0, reuse previous results
+        cbz             w14, 5b
+9:
+        ld1             {v29.8h, v30.8h}, [x0]              // src0
+        sshr            v31.8h, v29.8h, #0x4
+        ld1             {v8.8h, v9.8h}, [x1]                // src1
+        sshr            v10.8h, v8.8h, #0x4
+        ld1             {v11.8h, v12.8h}, [x8], #32         // gh0
+        sshr            v29.8h, v30.8h, #0x4
+        sshr            v30.8h, v9.8h, #0x4
+        ld1             {v8.8h, v9.8h}, [x9], #32           // gh1
+        shadd           v13.8h, v11.8h, v8.8h               // (gh0 + gh1) >> 1, left half
+        ld1             {v14.8h, v15.8h}, [x10], #32        // gv0
+        ld1             {v3.8h, v4.8h}, [x11], #32          // gv1
+        shadd           v5.8h, v14.8h, v3.8h                // (gv0 + gv1) >> 1, left half
+        sub             v31.8h, v31.8h, v10.8h              // diff, left half
+        shadd           v8.8h, v12.8h, v9.8h                // (gh0 + gh1) >> 1, right half
+        shadd           v3.8h, v15.8h, v4.8h                // (gv0 + gv1) >> 1, right half
+        sub             v4.8h, v29.8h, v30.8h               // diff, right half
+
+        abs             v29.8h, v13.8h
+        abs             v30.8h, v8.8h
+        abs             v9.8h, v5.8h
+        abs             v10.8h, v3.8h
+
+        add             x0, x0, #(VVC_MAX_PB_SIZE * 2)
+        add             x1, x1, #(VVC_MAX_PB_SIZE * 2)
+
+        tbl             v11.16b, {v29.16b, v30.16b}, v0.16b
+        saddl           v12.4s, v11.4h, v29.4h
+        saddl2          v11.4s, v11.8h, v29.8h
+        addp            v11.4s, v12.4s, v11.4s
+
+        tbl             v12.16b, {v29.16b, v30.16b}, v1.16b
+        saddl           v14.4s, v12.4h, v30.4h
+        saddl2          v29.4s, v12.8h, v30.8h
+        addp            v29.4s, v14.4s, v29.4s
+
+        addp            v29.4s, v11.4s, v29.4s
+
+        tbl             v30.16b, {v9.16b, v10.16b}, v0.16b
+        saddl           v11.4s, v30.4h, v9.4h
+        saddl2          v30.4s, v30.8h, v9.8h
+        addp            v30.4s, v11.4s, v30.4s
+
+        tbl             v11.16b, {v9.16b, v10.16b}, v1.16b
+        saddl           v12.4s, v11.4h, v10.4h
+        saddl2          v9.4s, v11.8h, v10.8h
+        addp            v9.4s, v12.4s, v9.4s
+
+        addp            v30.4s, v30.4s, v9.4s
+
+        cmlt            v9.8h, v13.8h, #0
+        cmeq            v10.8h, v13.8h, #0
+        bic             v10.16b, v2.16b, v10.16b
+        orr             v9.16b, v9.16b, v10.16b
+
+        cmlt            v10.8h, v8.8h, #0
+        cmeq            v11.8h, v8.8h, #0
+        bic             v11.16b, v2.16b, v11.16b
+        orr             v10.16b, v10.16b, v11.16b
+
+        cmlt            v11.8h, v5.8h, #0
+        cmeq            v5.8h, v5.8h, #0
+        bic             v5.16b, v2.16b, v5.16b
+        orr             v5.16b, v11.16b, v5.16b
+
+        cmlt	        v11.8h, v3.8h, #0
+        cmeq	        v3.8h, v3.8h, #0
+        bic             v3.16b, v2.16b, v3.16b
+        orr             v3.16b, v11.16b, v3.16b
+
+        mul         	v11.8h, v5.8h, v13.8h
+        mul         	v12.8h, v3.8h, v8.8h
+        mul         	v8.8h, v9.8h, v31.8h
+        mul         	v9.8h, v10.8h, v4.8h
+        mul         	v13.8h, v5.8h, v31.8h
+        mul         	v14.8h, v3.8h, v4.8h
+
+        tbl             v3.16b, { v11.16b, v12.16b }, v0.16b
+        saddl           v4.4s, v3.4h, v11.4h
+        saddl2          v3.4s, v3.8h, v11.8h
+        addp            v3.4s, v4.4s, v3.4s
+
+        tbl             v4.16b, { v11.16b, v12.16b }, v1.16b
+        saddl	        v5.4s, v4.4h, v12.4h
+        saddl2	        v4.4s, v4.8h, v12.8h
+        addp	        v4.4s, v5.4s, v4.4s
+
+        addp            v31.4s, v3.4s, v4.4s
+
+        tbl.16b	v3, { v8, v9 }, v0
+        saddl.4s	v4, v3, v8
+        saddl2.4s	v3, v3, v8
+        addp.4s	v3, v4, v3
+
+        tbl.16b	v4, { v8, v9 }, v1
+        saddl.4s	v5, v4, v9
+        saddl2.4s	v4, v4, v9
+        addp.4s	v4, v5, v4
+        addp.4s	v8, v3, v4
+
+        tbl.16b	v3, { v13, v14 }, v0
+        saddl.4s	v4, v3, v13
+        saddl2.4s	v3, v3, v13
+        addp.4s	v3, v4, v3
+
+        tbl.16b	v4, { v13, v14 }, v1
+        saddl.4s	v5, v4, v14
+        saddl2.4s	v4, v4, v14
+        addp.4s	v4, v5, v4
+        addp.4s	v9, v3, v4
+
+        add     	    v25.4s, v29.4s, v25.4s
+        add     	    v24.4s, v30.4s, v24.4s
+        add     	    v26.4s, v31.4s, v26.4s
+        sub     	    v28.4s, v28.4s, v8.4s
+        sub     	    v27.4s, v27.4s, v9.4s
+
+        // check whether padding top
+        cmp             w13, w6
+        b.ne            10f
+        cbnz            w14, 10f
+        // y == block_h && dy == 0, padding top
+        add     	    v25.4s, v29.4s, v25.4s
+        add     	    v24.4s, v30.4s, v24.4s
+        add     	    v26.4s, v31.4s, v26.4s
+        sub     	    v28.4s, v28.4s, v8.4s
+        sub     	    v27.4s, v27.4s, v9.4s
+        add             w14, w14, #0x1
+        // TODO: jump to 9
+        b	            8b
+10:
+        cmp             w14, #(BDOF_MIN_BLOCK_SIZE - 1)
+        b.eq	        11f
+        cmp             w14, #(BDOF_MIN_BLOCK_SIZE)
+        b.ne	        12f
+        // save line4
+        b               1b
+ 11:
+        // y == BDOF_MIN_BLOCK_SIZE && dy == BDOF_MIN_BLOCK_SIZE - 1, padding bottom
+        cmp             x13, #(BDOF_MIN_BLOCK_SIZE)
+        b.eq	        13f
+        // save line3
+        mov         	v23.16b, v9.16b
+        mov         	v22.16b, v8.16b
+        mov         	v21.16b, v31.16b
+        mov         	v20.16b, v30.16b
+        mov         	v19.16b, v29.16b
+12:
+        add             w14, w14, #0x1                      // dy++
+        b               8b
+
+13:
+        // y == BDOF_MIN_BLOCK_SIZE && dy == BDOF_MIN_BLOCK_SIZE - 1, padding bottom
+        add     	    v25.4s, v29.4s, v25.4s
+        add     	    v24.4s, v30.4s, v24.4s
+        add     	    v26.4s, v31.4s, v26.4s
+        sub     	    v28.4s, v28.4s, v8.4s
+        sub     	    v27.4s, v27.4s, v9.4s
+	    b               2b
+
+16:
+        // restore
+        ldp             x29, x30, [sp, #0x70]
+        ldp             d9, d8, [sp, #0x60]
+        ldp             d11, d10, [sp, #0x50]
+        ldp             d13, d12, [sp, #0x40]
+        ldp             d15, d14, [sp, #0x30]
+        add             sp, sp, #0x80
         ret
 endfunc
