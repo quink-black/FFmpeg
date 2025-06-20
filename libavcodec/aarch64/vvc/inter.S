@@ -846,6 +846,13 @@ endconst
          sub             \dst\().8h, \tmp0\().8h, \tmp1\().8h
 .endm
 
+.macro bdof_vx_vy_clip_mask src, max, min, mask, dst
+        smin            \src\().4s, \src\().4s, \max\().4s
+        smax            \src\().4s, \src\().4s, \min\().4s
+        cmgt            \mask\().4s, \mask\().4s, #0
+        and             \dst\().16b, \src\().16b, \mask\().16b
+.endm
+
 .macro bdof_vx_vy_16x_save_line tmp0, tmp1, tmp2, tmp3, tmp4
         mov             \tmp0\().16b, v29.16b
         mov             \tmp1\().16b, v30.16b
@@ -906,21 +913,20 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         addp            v25.4s, v25.4s, v25.4s
         addp            v27.4s, v27.4s, v27.4s
         addp            v26.4s, v26.4s, v26.4s
+        addp            v23.4s, v23.4s, v23.4s
+        addp            v24.4s, v24.4s, v24.4s
+
         clz             v28.4s, v25.4s
         add             v28.4s, v28.4s, v2.4s               // log2
         shl             v26.4s, v26.4s, #0x2
         sshl            v26.4s, v26.4s, v28.4s
-        smin            v26.4s, v26.4s, v3.4s
-        smax            v26.4s, v26.4s, v4.4s
-        cmgt            v25.4s, v25.4s, #0
-        and             v25.16b, v26.16b, v25.16b
+
+        bdof_vx_vy_clip_mask v26, v3, v4, v25, v25
         sqxtn	        v26.4h, v25.4s
         st1             {v26.s}[0], [x4], x11
 
         subs            x12, x12, #(BDOF_MIN_BLOCK_SIZE)
 
-        addp            v23.4s, v23.4s, v23.4s
-        addp            v24.4s, v24.4s, v24.4s
         clz             v26.4s, v27.4s
         add             v26.4s, v26.4s, v2.4s
         shl             v24.4s, v24.4s, #0x2
@@ -928,10 +934,8 @@ function ff_vvc_derive_bdof_vx_vy_8x_neon, export=1
         sshr            v23.4s, v23.4s, #0x1
         sub             v23.4s, v24.4s, v23.4s
         sshl            v23.4s, v23.4s, v26.4s
-        smin            v23.4s, v23.4s, v3.4s
-        smax            v23.4s, v23.4s, v4.4s
-        cmgt            v24.4s, v27.4s, #0
-        and             v23.16b, v23.16b, v24.16b
+
+        bdof_vx_vy_clip_mask v23, v3, v4, v27, v23
         sqxtn           v23.4h, v23.4s
         st1             {v23.s}[0], [x5], x11
 
@@ -1058,12 +1062,10 @@ function ff_vvc_derive_bdof_vx_vy_16x_neon, export=1
         add             v3.4s, v3.4s, v5.4s                 // -log2()
         shl             v4.4s, v28.4s, #0x2
         sshl            v3.4s, v4.4s, v3.4s
+
         movi            v28.4s, #0xf                        // clip to 15
-        smin            v3.4s, v3.4s, v28.4s
         mvni        	v29.4s, #0xe                        // clip to -15
-        smax        	v3.4s, v3.4s, v29.4s
-        cmgt            v4.4s, v25.4s, #0
-        and             v3.16b, v3.16b, v4.16b
+        bdof_vx_vy_clip_mask v3, v28, v29, v25, v3
         sqxtn           v4.4h, v3.4s
         st1             {v4.d}[0], [x4], #(BDOF_MIN_BLOCK_SIZE * 2)
 
@@ -1076,10 +1078,8 @@ function ff_vvc_derive_bdof_vx_vy_16x_neon, export=1
         sshr            v3.4s, v3.4s, #0x1
         sub             v3.4s, v5.4s, v3.4s
         sshl        	v3.4s, v3.4s, v4.4s
-        smin            v3.4s, v3.4s, v28.4s
-        smax        	v3.4s, v3.4s, v29.4s
-        cmgt            v4.4s, v24.4s, #0
-        and             v3.16b, v3.16b, v4.16b
+
+        bdof_vx_vy_clip_mask v3, v28, v29, v24, v3
         sqxtn           v3.4h, v3.4s
         st1             {v3.d}[0], [x5], #(BDOF_MIN_BLOCK_SIZE * 2)
         b.eq	        16f
