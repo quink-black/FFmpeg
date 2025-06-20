@@ -44,6 +44,7 @@ OBJS-$(CONFIG_ADPCM_G722_DECODER)      += x86/g722dsp_init.o
 OBJS-$(CONFIG_ADPCM_G722_ENCODER)      += x86/g722dsp_init.o
 OBJS-$(CONFIG_ALAC_DECODER)            += x86/alacdsp_init.o
 OBJS-$(CONFIG_APNG_DECODER)            += x86/pngdsp_init.o
+OBJS-$(CONFIG_APV_DECODER)             += x86/apv_dsp_init.o
 OBJS-$(CONFIG_CAVS_DECODER)            += x86/cavsdsp.o
 OBJS-$(CONFIG_CFHD_DECODER)            += x86/cfhddsp_init.o
 OBJS-$(CONFIG_CFHD_ENCODER)            += x86/cfhdencdsp_init.o
@@ -54,7 +55,6 @@ OBJS-$(CONFIG_FLAC_DECODER)            += x86/flacdsp_init.o
 OBJS-$(CONFIG_FLAC_ENCODER)            += x86/flacencdsp_init.o
 OBJS-$(CONFIG_OPUS_DECODER)            += x86/opusdsp_init.o
 OBJS-$(CONFIG_OPUS_ENCODER)            += x86/celt_pvq_init.o
-OBJS-$(CONFIG_HEVC_DECODER)            += x86/hevcdsp_init.o x86/h26x/h2656dsp.o
 OBJS-$(CONFIG_JPEG2000_DECODER)        += x86/jpeg2000dsp_init.o
 OBJS-$(CONFIG_LSCR_DECODER)            += x86/pngdsp_init.o
 OBJS-$(CONFIG_MLP_DECODER)             += x86/mlpdsp_init.o
@@ -150,6 +150,7 @@ X86ASM-OBJS-$(CONFIG_ADPCM_G722_DECODER) += x86/g722dsp.o
 X86ASM-OBJS-$(CONFIG_ADPCM_G722_ENCODER) += x86/g722dsp.o
 X86ASM-OBJS-$(CONFIG_ALAC_DECODER)     += x86/alacdsp.o
 X86ASM-OBJS-$(CONFIG_APNG_DECODER)     += x86/pngdsp.o
+X86ASM-OBJS-$(CONFIG_APV_DECODER)      += x86/apv_dsp.o
 X86ASM-OBJS-$(CONFIG_CAVS_DECODER)     += x86/cavsidct.o
 X86ASM-OBJS-$(CONFIG_CFHD_ENCODER)     += x86/cfhdencdsp.o
 X86ASM-OBJS-$(CONFIG_CFHD_DECODER)     += x86/cfhddsp.o
@@ -162,13 +163,6 @@ X86ASM-OBJS-$(CONFIG_FLAC_DECODER)     += x86/flacdsp.o
 ifdef CONFIG_GPL
 X86ASM-OBJS-$(CONFIG_FLAC_ENCODER)     += x86/flac_dsp_gpl.o
 endif
-X86ASM-OBJS-$(CONFIG_HEVC_DECODER)     += x86/hevc_add_res.o            \
-                                          x86/hevc_deblock.o            \
-                                          x86/hevc_idct.o               \
-                                          x86/hevc_mc.o                 \
-                                          x86/h26x/h2656_inter.o        \
-                                          x86/hevc_sao.o                \
-                                          x86/hevc_sao_10bit.o
 X86ASM-OBJS-$(CONFIG_JPEG2000_DECODER) += x86/jpeg2000dsp.o
 X86ASM-OBJS-$(CONFIG_LSCR_DECODER)     += x86/pngdsp.o
 X86ASM-OBJS-$(CONFIG_MLP_DECODER)      += x86/mlpdsp.o
@@ -190,7 +184,9 @@ X86ASM-OBJS-$(CONFIG_VP6_DECODER)      += x86/vp6dsp.o
 X86ASM-OBJS-$(CONFIG_VP9_DECODER)      += x86/vp9intrapred.o            \
                                           x86/vp9intrapred_16bpp.o      \
                                           x86/vp9itxfm.o                \
+                                          x86/vp9itxfm_avx512.o         \
                                           x86/vp9itxfm_16bpp.o          \
+                                          x86/vp9itxfm_16bpp_avx512.o   \
                                           x86/vp9lpf.o                  \
                                           x86/vp9lpf_16bpp.o            \
                                           x86/vp9mc.o                   \

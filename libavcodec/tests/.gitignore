@@ -1,3 +1,4 @@
+/apv
 /av1_levels
 /avcodec
 /avpacket
@@ -11,7 +12,6 @@
 /h264_levels
 /h265_levels
 /htmlsubtitles
-/iirfilter
 /jpeg2000dwt
 /mathops
 /mjpegenc_huffman

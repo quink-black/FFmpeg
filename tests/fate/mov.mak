@@ -33,8 +33,8 @@ FATE_MOV_FFPROBE-$(call FRAMEMD5, MOV) = fate-mov-neg-firstpts-discard \
 
 FATE_MOV_FASTSTART = fate-mov-faststart-4gb-overflow \
 
-FATE_SAMPLES_AVCONV += $(FATE_MOV)
-FATE_SAMPLES_FFPROBE += $(FATE_MOV_FFPROBE)
+FATE_SAMPLES_FFMPEG += $(FATE_MOV-yes)
+FATE_SAMPLES_FFPROBE += $(FATE_MOV_FFPROBE-yes)
 FATE_SAMPLES_FASTSTART += $(FATE_MOV_FASTSTART)
 
 # Make sure we handle edit lists correctly in normal cases.
@@ -83,6 +83,14 @@ fate-mov-ibi-elst-starts-b: CMD = framemd5 -flags +bitexact -i $(TARGET_SAMPLES)
 
 # Makes sure that we handle overlapping framgments
 fate-mov-frag-overlap: CMD = framemd5 -i $(TARGET_SAMPLES)/mov/frag_overlap.mp4
+
+fate-mov-mp4-frag-flush: CMD = md5 -f lavfi -i color=blue,format=rgb24,trim=duration=0.04 -f lavfi -i anullsrc,aformat=s16,atrim=duration=2 -c:v png -c:a pcm_s16le -movflags +empty_moov+hybrid_fragmented -frag_duration 1000000 -frag_interleave 1 -bitexact -f mp4
+fate-mov-mp4-frag-flush: CMP = oneline
+fate-mov-mp4-frag-flush: REF = c9d0236bde4a0b24a01f6a032fd72e04
+FATE_MOV_FFMPEG-$(call ALLYES, LAVFI_INDEV COLOR_FILTER FORMAT_FILTER TRIM_FILTER \
+                               ANULLSRC_FILTER AFORMAT_FILTER ATRIM_FILTER        \
+                               WRAPPED_AVFRAME_DECODER PCM_S16LE_DECODER PCM_S16BE_DECODER \
+                               PNG_ENCODER PCM_S16LE_ENCODER MP4_MUXER) += fate-mov-mp4-frag-flush
 
 # Makes sure that we pick the right frames according to edit list when there is no keyframe with PTS < edit list start.
 # For example, when video starts on a B-frame, and edit list starts on that B-frame too.
@@ -164,6 +172,12 @@ FATE_MOV_FFMPEG_SAMPLES-$(call FRAMECRC, MOV, HEVC, HEVC_PARSER) \
                            += fate-mov-heic-demux-still-image-multiple-items
 fate-mov-heic-demux-still-image-multiple-items: CMD = framecrc -i $(TARGET_SAMPLES)/heif-conformance/C003.heic -c:v copy -map 0
 
+# heic demuxing - still image with multiple items, exporting cropping and/or rotation information.
+FATE_MOV_FFMPEG_FFPROBE_SAMPLES-$(call FRAMECRC, MOV, HEVC, HEVC_PARSER) \
+                           += fate-mov-heic-demux-clap-irot-imir
+fate-mov-heic-demux-clap-irot-imir: CMD = stream_demux mov $(TARGET_SAMPLES)/heif-conformance/MIAF007.heic "" "-c:v copy -map 0" \
+  "-show_entries stream=index,id:stream_disposition:stream_side_data_list"
+
 # heic demuxing - still image with multiple items in a grid.
 FATE_MOV_FFMPEG_FFPROBE_SAMPLES-$(call DEMMUX, MOV, FRAMECRC, HEVC_DECODER HEVC_PARSER) \
                            += fate-mov-heic-demux-still-image-grid
@@ -219,7 +233,7 @@ fate-mov-pcm-remux: CMP = oneline
 fate-mov-pcm-remux: REF = e76115bc392d702da38f523216bba165
 
 FATE_MOV_FFMPEG-$(call TRANSCODE, RAWVIDEO, MOV, TESTSRC_FILTER SETPTS_FILTER) += fate-mov-vfr
-fate-mov-vfr: CMD = md5 -filter_complex testsrc=size=2x2:duration=1,setpts=N*N -c rawvideo -fflags +bitexact -f mov
+fate-mov-vfr: CMD = md5 -filter_complex testsrc=size=2x2:duration=1,setpts=N*N:strip_fps=1 -c rawvideo -fflags +bitexact -f mov
 fate-mov-vfr: CMP = oneline
 fate-mov-vfr: REF = 1558b4a9398d8635783c93f84eb5a60d
 
@@ -281,4 +295,4 @@ fate-mov-mp4-iamf-ambisonic_1: CMD = transcode wav $(SRC) mp4 "-auto_conversion_
 FATE_FFMPEG += $(FATE_MOV_FFMPEG-yes)
 FATE_FFMPEG_FFPROBE += $(FATE_MOV_FFMPEG_FFPROBE-yes)
 
-fate-mov: $(FATE_MOV-yes) $(FATE_MOV_FFMPEG-yes) $(FATE_MOV_FFMPEG_FFPROBE-yes) $(FATE_MOV_FFPROBE) $(FATE_MOV_FASTSTART) $(FATE_MOV_FFMPEG_SAMPLES-yes) $(FATE_MOV_FFMPEG_FFPROBE_SAMPLES-yes)
+fate-mov: $(FATE_MOV-yes) $(FATE_MOV_FFMPEG-yes) $(FATE_MOV_FFMPEG_FFPROBE-yes) $(FATE_MOV_FFPROBE-yes) $(FATE_MOV_FASTSTART) $(FATE_MOV_FFMPEG_SAMPLES-yes) $(FATE_MOV_FFMPEG_FFPROBE_SAMPLES-yes)
