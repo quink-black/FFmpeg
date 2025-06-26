@@ -154,6 +154,7 @@ extern const FFCodec ff_h264_v4l2m2m_decoder;
 extern const FFCodec ff_h264_mediacodec_decoder;
 extern const FFCodec ff_h264_mediacodec_encoder;
 extern const FFCodec ff_h264_mmal_decoder;
+extern const FFCodec ff_h264_oh_decoder;
 extern const FFCodec ff_h264_qsv_decoder;
 extern const FFCodec ff_h264_rkmpp_decoder;
 extern const FFCodec ff_hap_encoder;
