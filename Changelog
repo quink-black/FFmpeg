@@ -21,6 +21,7 @@ version <next>:
 - G.728 decoder
 - pad_cuda filter
 - Sanyo LD-ADPCM decoder
+- OpenHarmony hardware decoder/encoder
 
 
 version 7.1:
