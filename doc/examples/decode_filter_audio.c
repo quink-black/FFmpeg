@@ -38,7 +38,7 @@
 #include <libavutil/mem.h>
 #include <libavutil/opt.h>
 
-static const char *filter_descr = "aresample=8000,aformat=sample_fmts=s16:channel_layouts=mono";
+static const char *filter_descr = "aresample=8000,volume@quink=volume=0.8,aformat=sample_fmts=s16:channel_layouts=mono";
 static const char *player       = "ffplay -f s16le -ar 8000 -ac 1 -";
 
 static AVFormatContext *fmt_ctx;
@@ -238,6 +238,11 @@ int main(int argc, char **argv)
         goto end;
     if ((ret = init_filters(filter_descr)) < 0)
         goto end;
+
+    char *dump_str = avfilter_graph_dump(filter_graph, NULL);
+    fprintf(stderr, "%s\n", dump_str);
+    av_free(dump_str);
+    avfilter_graph_send_command(filter_graph, "volume@quink", "volume", "0.5", NULL, 0, 0);
 
     /* read all packets */
     while (1) {
