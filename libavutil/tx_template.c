@@ -29,6 +29,48 @@
 #define TABLE_DEF(name, size) \
     DECLARE_ALIGNED(32, TXSample, TX_TAB(ff_tx_tab_ ##name))[size]
 
+#if CONFIG_TX_TAB_MAX_SIZE >= 32768
+#define SR_TABLE_32768    SR_TABLE(32768)
+#else
+#define SR_TABLE_32768
+#endif
+
+#if CONFIG_TX_TAB_MAX_SIZE >= 65536
+#define SR_TABLE_65536    SR_TABLE(65536)
+#else
+#define SR_TABLE_65536
+#endif
+
+#if CONFIG_TX_TAB_MAX_SIZE >= 131072
+#define SR_TABLE_131072   SR_TABLE(131072)
+#else
+#define SR_TABLE_131072
+#endif
+
+#if CONFIG_TX_TAB_MAX_SIZE >= 262144
+#define SR_TABLE_262144   SR_TABLE(262144)
+#else
+#define SR_TABLE_262144
+#endif
+
+#if CONFIG_TX_TAB_MAX_SIZE >= 524288
+#define SR_TABLE_524288   SR_TABLE(524288)
+#else
+#define SR_TABLE_524288
+#endif
+
+#if CONFIG_TX_TAB_MAX_SIZE >= 1048576
+#define SR_TABLE_1048576  SR_TABLE(1048576)
+#else
+#define SR_TABLE_1048576
+#endif
+
+#if CONFIG_TX_TAB_MAX_SIZE >= 2097152
+#define SR_TABLE_2097152  SR_TABLE(2097152)
+#else
+#define SR_TABLE_2097152
+#endif
+
 #define SR_POW2_TABLES \
     SR_TABLE(8)        \
     SR_TABLE(16)       \
@@ -42,13 +84,13 @@
     SR_TABLE(4096)     \
     SR_TABLE(8192)     \
     SR_TABLE(16384)    \
-    SR_TABLE(32768)    \
-    SR_TABLE(65536)    \
-    SR_TABLE(131072)   \
-    SR_TABLE(262144)   \
-    SR_TABLE(524288)   \
-    SR_TABLE(1048576)   \
-    SR_TABLE(2097152)   \
+    SR_TABLE_32768     \
+    SR_TABLE_65536     \
+    SR_TABLE_131072    \
+    SR_TABLE_262144    \
+    SR_TABLE_524288    \
+    SR_TABLE_1048576   \
+    SR_TABLE_2097152   \
 
 #define SR_TABLE(len) \
     TABLE_DEF(len, len/4 + 1);
@@ -721,13 +763,27 @@ DECL_SR_CODELET(2048,1024,512)
 DECL_SR_CODELET(4096,2048,1024)
 DECL_SR_CODELET(8192,4096,2048)
 DECL_SR_CODELET(16384,8192,4096)
+#if CONFIG_TX_TAB_MAX_SIZE >= 32768
 DECL_SR_CODELET(32768,16384,8192)
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 65536
 DECL_SR_CODELET(65536,32768,16384)
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 131072
 DECL_SR_CODELET(131072,65536,32768)
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 262144
 DECL_SR_CODELET(262144,131072,65536)
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 524288
 DECL_SR_CODELET(524288,262144,131072)
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 1048576
 DECL_SR_CODELET(1048576,524288,262144)
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 2097152
 DECL_SR_CODELET(2097152,1048576,524288)
+#endif
 
 static av_cold int TX_NAME(ff_tx_fft_init)(AVTXContext *s,
                                            const FFTXCodelet *cd,
@@ -2157,13 +2213,27 @@ const FFTXCodelet * const TX_NAME(ff_tx_codelet_list)[] = {
     &TX_NAME(ff_tx_fft4096_ns_def),
     &TX_NAME(ff_tx_fft8192_ns_def),
     &TX_NAME(ff_tx_fft16384_ns_def),
+#if CONFIG_TX_TAB_MAX_SIZE >= 32768
     &TX_NAME(ff_tx_fft32768_ns_def),
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 65536
     &TX_NAME(ff_tx_fft65536_ns_def),
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 131072
     &TX_NAME(ff_tx_fft131072_ns_def),
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 262144
     &TX_NAME(ff_tx_fft262144_ns_def),
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 524288
     &TX_NAME(ff_tx_fft524288_ns_def),
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 1048576
     &TX_NAME(ff_tx_fft1048576_ns_def),
+#endif
+#if CONFIG_TX_TAB_MAX_SIZE >= 2097152
     &TX_NAME(ff_tx_fft2097152_ns_def),
+#endif
 
     /* Prime factor codelets */
     &TX_NAME(ff_tx_fft3_ns_def),

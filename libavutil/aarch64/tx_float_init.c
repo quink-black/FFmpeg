@@ -57,8 +57,8 @@ const FFTXCodelet * const ff_tx_codelet_list_float_aarch64[] = {
     TX_DEF(fft32,     FFT, 32, 32, 2, 0, 128, neon_init, neon, NEON, AV_TX_INPLACE, 0),
     TX_DEF(fft32_ns,  FFT, 32, 32, 2, 0, 192, neon_init, neon, NEON, AV_TX_INPLACE | FF_TX_PRESHUFFLE, 0),
 
-    TX_DEF(fft_sr,    FFT, 64, 2097152, 2, 0, 128, neon_init, neon, NEON, 0, 0),
-    TX_DEF(fft_sr_ns, FFT, 64, 2097152, 2, 0, 192, neon_init, neon, NEON, AV_TX_INPLACE | FF_TX_PRESHUFFLE, 0),
+    TX_DEF(fft_sr,    FFT, 64, CONFIG_TX_TAB_MAX_SIZE, 2, 0, 128, neon_init, neon, NEON, 0, 0),
+    TX_DEF(fft_sr_ns, FFT, 64, CONFIG_TX_TAB_MAX_SIZE, 2, 0, 192, neon_init, neon, NEON, AV_TX_INPLACE | FF_TX_PRESHUFFLE, 0),
 
     NULL,
 };

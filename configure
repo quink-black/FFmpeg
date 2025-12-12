@@ -447,6 +447,7 @@ Advanced options (experts only):
                             crashes and arbitrary code execution, it may be faster, but
                             should only be used with trusted input)
   --sws-max-filter-size=N  the max filter size swscale uses [$sws_max_filter_size_default]
+  --tx-tab-max-size=N      the max tab size tx uses, must be power of 2 in the range of [$tx_tab_max_size_min, $tx_tab_max_size_default]
 
 Optimization options (experts only):
   --disable-asm            disable all assembly optimizations
@@ -2166,6 +2167,7 @@ CONFIG_LIST="
     ptx_compression
     resource_compression
     thumb
+    tx_tab_max_size
     valgrind_backtrace
     xmm_clobber_test
     $COMPONENT_LIST
@@ -2796,6 +2798,7 @@ CMDLINE_SET="
     target_samples
     tempprefix
     toolchain
+    tx_tab_max_size
     valgrind
     windres
     x86asmexe
@@ -4300,7 +4303,10 @@ enable unstable
 enable valgrind_backtrace
 
 sws_max_filter_size_default=256
+tx_tab_max_size_min=16384
+tx_tab_max_size_default=2097152
 set_default sws_max_filter_size
+set_default tx_tab_max_size
 
 # internal components are enabled by default
 enable $EXTRALIBS_LIST
@@ -8502,6 +8508,7 @@ cat > $TMPH <<EOF
 #define BUILDSUF "$build_suffix"
 #define SLIBSUF "$SLIBSUF"
 #define SWS_MAX_FILTER_SIZE $sws_max_filter_size
+#define AV_TX_TAB_MAX_SIZE $tx_tab_max_size
 EOF
 
 test -n "$assert_level" &&
