@@ -873,13 +873,23 @@ AVFILTER_DEFINE_CLASS(oc_plugin);
 
 extern "C"
 const FFFilter ff_vf_oc_plugin = {
-    .p.name        = "oc_plugin",
-    .p.description = NULL_IF_CONFIG_SMALL("Apply processing using external OpenCV plugin."),
-    .p.priv_class  = &oc_plugin_class,
-    .p.flags       = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_DYNAMIC_OUTPUTS,
-    .priv_size     = sizeof(OCPluginFilterContext),
-    .init          = init,
-    .uninit        = uninit,
-    .activate      = activate,
-    FILTER_QUERY_FUNC2(query_formats),
+    /* p */ {
+        /* name */        "oc_plugin",
+        /* description */ NULL_IF_CONFIG_SMALL("Apply processing using external OpenCV plugin."),
+        /* inputs */      nullptr,
+        /* outputs */     nullptr,
+        /* priv_class */  &oc_plugin_class,
+        /* flags */       AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_DYNAMIC_OUTPUTS,
+    },
+    /* nb_inputs */       0,
+    /* nb_outputs */      0,
+    /* formats_state */   FF_FILTER_FORMATS_QUERY_FUNC2,
+    /* preinit */         nullptr,
+    /* init */            init,
+    /* uninit */          uninit,
+    /* formats */         { query_formats },
+    /* priv_size */       sizeof(OCPluginFilterContext),
+    /* flags_internal */  0,
+    /* process_command */ nullptr,
+    /* activate */        activate,
 };
