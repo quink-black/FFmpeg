@@ -7280,8 +7280,7 @@ enabled libnpp            && { test_cpp_condition "$(cd "$source_path"; pwd)/lib
 enabled libopencore_amrnb && require libopencore_amrnb opencore-amrnb/interf_dec.h Decoder_Interface_init -lopencore-amrnb
 enabled libopencore_amrwb && require libopencore_amrwb opencore-amrwb/dec_if.h D_IF_init -lopencore-amrwb
 enabled libopencv         && { check_pkg_config libopencv opencv4 opencv2/core/core_c.h cvCreateImageHeader ||
-                               check_lib libopencv opencv2/core/core_c.h cvCreateImageHeader -lopencv_core -lopencv_imgproc ||
-                               require_headers "opencv2/core/core_c.h"; } &&
+                               require libopencv opencv2/core/core_c.h cvCreateImageHeader -lopencv_core -lopencv_imgproc; } &&
                              { enabled oc_plugin_filter && add_cxxflags $libopencv_cflags; }
 enabled libopenh264       && require_pkg_config libopenh264 "openh264 >= 1.3.0" wels/codec_api.h WelsGetCodecVersion
 enabled libopenjpeg       && { check_pkg_config libopenjpeg "libopenjp2 >= 2.1.0" openjpeg.h opj_version ||
