@@ -872,24 +872,25 @@ static const AVOption oc_plugin_options[] = {
 AVFILTER_DEFINE_CLASS(oc_plugin);
 
 extern "C"
-const FFFilter ff_vf_oc_plugin = {
-    /* p */ {
-        /* name */        "oc_plugin",
-        /* description */ NULL_IF_CONFIG_SMALL("Apply processing using external OpenCV plugin."),
-        /* inputs */      nullptr,
-        /* outputs */     nullptr,
-        /* priv_class */  &oc_plugin_class,
-        /* flags */       AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_DYNAMIC_OUTPUTS,
-    },
-    /* nb_inputs */       0,
-    /* nb_outputs */      0,
-    /* formats_state */   FF_FILTER_FORMATS_QUERY_FUNC2,
-    /* preinit */         nullptr,
-    /* init */            init,
-    /* uninit */          uninit,
-    /* formats */         { query_formats },
-    /* priv_size */       sizeof(OCPluginFilterContext),
-    /* flags_internal */  0,
-    /* process_command */ nullptr,
-    /* activate */        activate,
-};
+const FFFilter ff_vf_oc_plugin = []() {
+    FFFilter f = {0};
+    f.p.name = "oc_plugin";
+    f.p.description = NULL_IF_CONFIG_SMALL("Apply processing using external OpenCV plugin.");
+    f.p.inputs = nullptr, f.p.outputs = nullptr,
+    f.p.priv_class = &oc_plugin_class,
+    f.p.flags = AVFILTER_FLAG_DYNAMIC_INPUTS | AVFILTER_FLAG_DYNAMIC_OUTPUTS,
+
+    f.nb_inputs = 0;
+    f.nb_outputs = 0;
+    f.formats_state = FF_FILTER_FORMATS_QUERY_FUNC2;
+    f.preinit = nullptr;
+    f.init = init;
+    f.uninit = uninit;
+    f.formats.query_func2 = query_formats;
+    f.priv_size = sizeof(OCPluginFilterContext);
+    f.flags_internal = 0;
+    f.process_command = nullptr;
+    f.activate = activate;
+
+    return f;
+}();
