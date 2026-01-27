@@ -871,9 +871,8 @@ static const AVOption oc_plugin_options[] = {
 
 AVFILTER_DEFINE_CLASS(oc_plugin);
 
-extern "C"
-const FFFilter ff_vf_oc_plugin = []() {
-    FFFilter f = {0};
+static FFFilter create_ff_filter() {
+    FFFilter f = {};
     f.p.name = "oc_plugin";
     f.p.description = NULL_IF_CONFIG_SMALL("Apply processing using external OpenCV plugin.");
     f.p.inputs = nullptr, f.p.outputs = nullptr,
@@ -893,4 +892,7 @@ const FFFilter ff_vf_oc_plugin = []() {
     f.activate = activate;
 
     return f;
-}();
+};
+
+extern "C"
+const FFFilter ff_vf_oc_plugin = create_ff_filter();
